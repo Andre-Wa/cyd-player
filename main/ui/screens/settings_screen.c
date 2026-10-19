@@ -51,6 +51,7 @@ static void settings_draw(gfx_canvas_t *c)
 
     snprintf(s, sizeof(s), "Tela: modo %d", cfg->lcd_xform);
     gfx_button(c, 212, 158, 100, 26, s, cfg->lcd_xform >= 2);
+    gfx_button(c, 212, 188, 100, 26, "Orient.", false);
 
     gfx_button(c, 212, ROW_LOC, 100, 56, NULL, false);
     gfx_icon(c, ICON_CHECK, 232, ROW_LOC + 28, 13, COL_ACCENT);
@@ -69,7 +70,7 @@ static void settings_draw(gfx_canvas_t *c)
     } else {
         snprintf(info, sizeof(info), "SD: ausente");
     }
-    gfx_text_fit(c, 8, INFO_Y + 2, 304, info, COL_MUTED, 1);
+    gfx_text_fit(c, 8, INFO_Y + 2, 200, info, COL_MUTED, 1);
 
     ui_draw_back_button(c);
     gfx_text(c, 100, 212, "v" APP_VERSION, COL_MUTED, 1);
@@ -121,6 +122,8 @@ static void settings_touch(const touch_evt_t *ev)
         cfg->auto_next = !cfg->auto_next;
         appcfg_save();
         ui_invalidate_all();
+    } else if (gfx_in_rect(x, y, 212, 188, 100, 26)) {
+        ui_show(SCREEN_ORIENT);
     } else if (gfx_in_rect(x, y, 212, 158, 100, 26)) {
         cfg->lcd_xform = (cfg->lcd_xform + 1) % (LCD_MODE_MAX + 1);
         lcd_set_xform(cfg->lcd_xform);

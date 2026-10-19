@@ -252,6 +252,8 @@ static void touch_task(void *arg)
     int px = 0, py = 0, lx = 0, ly = 0;
     uint16_t prx = 0, pry = 0;
     int64_t t0 = 0;
+    int64_t last_release_ms = 0;
+    uint32_t bounces = 0;
 
     while (true) {
         uint16_t x, y, rx, ry;
@@ -259,6 +261,14 @@ static void touch_task(void *arg)
         touch_evt_t ev = {0};
 
         if (down && !pressed) {
+            /* debounce: ignora re-pressa logo após soltar (bounce resistivo) */
+            if (ui_now_ms() - last_release_ms < 60) {
+                bounces++;
+                ESP_LOGI(TAG, "touch: bounce descartado (#%lu)",
+                         (unsigned long)bounces);
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
             pressed = true;
             dragging = false;
             long_sent = false;
@@ -291,7 +301,10 @@ static void touch_task(void *arg)
             }
         } else if (!down && pressed) {
             pressed = false;
-            if (!dragging && !long_sent && ui_now_ms() - t0 < 800) {
+            last_release_ms = ui_now_ms();
+            /* TAP exige pressão >= 40 ms: bounce curto nunca vira toque */
+            if (!dragging && !long_sent && ui_now_ms() - t0 >= 40 &&
+                    ui_now_ms() - t0 < 800) {
                 ev.type = TEV_TAP;
                 ev.x = px; ev.y = py; ev.rx = prx; ev.ry = pry;
                 xQueueSend(s_touch_q, &ev, 0);

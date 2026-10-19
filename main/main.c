@@ -305,7 +305,11 @@ static void app_ctrl_task(void *arg)
         if (!s_boot_ui_done && now - boot_ms > 2500) {
             s_boot_ui_done = true;
             app_config_t *cfg = appcfg_get();
-            if (!cfg->orient_ok) {
+            if (DEBUG_CALIB_EVERY_BOOT) {
+                /* rodada de testes: seta de orientação em todo boot;
+                 * confirmar (segurar 2 s) leva à calibração de touch */
+                ui_show(SCREEN_ORIENT);
+            } else if (!cfg->orient_ok) {
                 ui_show(SCREEN_ORIENT);     /* quiz da seta (1ª vez) */
             } else if (!cfg->has_calib) {
                 ui_show(SCREEN_CALIB);      /* primeira vez: calibrar o touch */

@@ -11,6 +11,9 @@
 #include "app_config.h"
 #include "nvs_config.h"
 #include "touch_xpt2046.h"
+#include "esp_log.h"
+
+static const char *TAG = "calib";
 
 /* alvos (com margem para o dedo não sair da tela) */
 static const int16_t TX[4] = { 30, LCD_H_RES - 31, 30, LCD_H_RES - 31 };
@@ -24,6 +27,8 @@ static void calib_enter(void)
 {
     s_step = 0;
     s_done_ok = false;
+    ESP_LOGI(TAG, "=== calibracao iniciada (xform=%u) ===",
+             appcfg_get()->lcd_xform);
 }
 
 /* resolve sistema 3x3 (Cramer) */
@@ -73,9 +78,13 @@ static bool finish_calibration(void)
         return false;
     }
     /* sanidade: escala razoável (~4096 -> ~320/240) */
+    ESP_LOGI(TAG, "afim X: %.6f %.6f %.6f", cx[0], cx[1], cx[2]);
+    ESP_LOGI(TAG, "afim Y: %.6f %.6f %.6f", cy[0], cy[1], cy[2]);
     float sx = fabsf(cx[0]) + fabsf(cx[1]);
     float sy = fabsf(cy[0]) + fabsf(cy[1]);
+    ESP_LOGI(TAG, "sanidade: |sx|=%.4f |sy|=%.4f (faixa ok 0.02..0.5)", sx, sy);
     if (sx < 0.02f || sx > 0.5f || sy < 0.02f || sy > 0.5f) {
+        ESP_LOGE(TAG, "posicao final: REJEITADA (pontos inconsistentes)");
         return false;
     }
     app_config_t *cfg = appcfg_get();
@@ -84,6 +93,7 @@ static bool finish_calibration(void)
     cfg->has_calib = true;
     appcfg_save();
     xpt2046_set_calibration(cfg->calib);
+    ESP_LOGI(TAG, "posicao final: APLICADA e salva na NVS");
     return true;
 }
 
@@ -148,6 +158,8 @@ static void calib_touch(const touch_evt_t *ev)
     }
     s_rx[s_step] = (float)ev->rx;
     s_ry[s_step] = (float)ev->ry;
+    ESP_LOGI(TAG, "tentativa ponto %d: raw=(%u,%u) scr=(%d,%d) alvo=(%d,%d)",
+             s_step + 1, ev->rx, ev->ry, ev->x, ev->y, TX[s_step], TY[s_step]);
     s_step++;
     if (s_step == 4) {
         s_done_ok = finish_calibration();

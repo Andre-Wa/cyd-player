@@ -46,16 +46,21 @@ comunidade CYD):
 
 Tudo definido em [`main/app_config.h`](main/app_config.h).
 
-> **Orientação e cores da tela** (v1.3.1, `main/app_config.h` e NVS):
+> **Orientação e cores da tela** (v1.3.2, NVS `xform` + `main/app_config.h`):
 > - Clones do CYD variam em polaridade do bit **MV** (scan nativo paisagem ou
 >   retrato), ordem de cor **BGR/RGB** e espelhos **MX/MY** — e alguns não
->   trazem o SDO conectado (readback inútil). Por isso a orientação é um
->   **modo (0–13)** escolhido no quiz do primeiro boot: tabela `s_modes`
->   em `display/lcd_spi_driver.c` (MADCTL diretos + 4 transposições por
->   software para painéis com scan fixo retrato).
+>   trazem o SDO conectado (readback inútil). A orientação é um **modo
+>   (0–13)** escolhido no quiz do primeiro boot: tabela `s_modes` em
+>   `display/lcd_spi_driver.c` (10 MADCTL diretos + 4 transposições por
+>   software para scan fixo retrato).
 > - Quiz: **toque/arraste** cicla o modo; **segurar 2 s** confirma e abre a
->   calibração de touch. Depois: *Ajustes → “Tela: modo N”*.
-> - O modo escolhido e a calibração ficam na NVS (`xform`, `calib`).
+>   calibração de touch. Depois: *Ajustes → “Tela: modo N”* / *“Orient.”*.
+> - **Unidades observadas:** CYD ILI9341 padrão → modo **0** (`0x28`);
+>   clone com scan paisagem em MV=0 e RGB → modo **2** (`0x40`, confirmado
+>   em unidade real com quiz + calibração).
+> - A calibração de touch loga cada ponto (`calib: tentativa ponto N:
+>   raw=… scr=… alvo=…`), o afim resultante e o desfecho — útil para
+>   diagnosticar touch “invertido” (resíduos típicos: 2–4 px).
 
 ## 3. Arquitetura (conforme especificação)
 

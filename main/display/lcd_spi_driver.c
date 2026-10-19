@@ -169,6 +169,10 @@ static void apply_madctl(void)
 void lcd_set_xform(uint8_t xf)
 {
     appcfg_get()->lcd_xform = (uint8_t)(xf % LCD_MODE_COUNT);
+    ESP_LOGI(TAG, "modo de orientacao %u (MADCTL 0x%02X, transposicao %u)",
+             appcfg_get()->lcd_xform,
+             madctl_for_xform(appcfg_get()->lcd_xform),
+             s_modes[appcfg_get()->lcd_xform % LCD_MODE_COUNT].transp);
     apply_madctl();
 }
 

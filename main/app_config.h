@@ -93,7 +93,11 @@
 
 /* ===================== Aplicação ========================================== */
 #define APP_BT_DEVICE_NAME  "CYD Audio Player"
-#define APP_VERSION         "1.3.1"
+#define APP_VERSION         "1.3.2"
+
+/* RODADA DE TESTES (debug): força o fluxo seta de orientação + calibração
+ * de touch em TODO boot, independente de orient_ok/has_calib. */
+#define DEBUG_CALIB_EVERY_BOOT 0
 
 /* Compile com -DAPP_BT_ENABLE=0 para builds sem Bluetooth (ex.: emulador
  * QEMU, que não possui rádio). Em hardware real, mantenha 1. */
