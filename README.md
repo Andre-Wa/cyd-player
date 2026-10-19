@@ -22,7 +22,7 @@ operação **sem PSRAM**.
 | 🔊 Bluetooth A2DP **Source** | **Saída principal**: o CYD **transmite** áudio (SBC 44,1 kHz) para caixas/fones BT, com retry automático do START do stream |
 | 🔍 Pareamento pela tela | Varredura GAP (**iniciada automaticamente no boot** se não houver dispositivo salvo), lista com RSSI, conexão com 1 toque, reconexão automática do último dispositivo |
 | 🎚 Volume absoluto (AVRCP) | O volume do app controla o do alto-falante — e vice-versa (sincronizado) |
-| 🔀 Volume por rota | `vol_bt` e `vol_local` independentes na NVS: ao trocar BT↔alto-falante, salva o volume da rota antiga e carrega o da nova (slider e teclas do fone ajustam a rota ativa). A rota local aplica taper quadrático com piso em 3% efetivo (10%→3%, 25%→6%, 50%→25%): o SC8002D+DAC 8 bits tem ganho alto e, abaixo disso, a amplitude vira ruído de quantização. O DAC permanece alimentado com silêncio em qualquer rota (o amp não tem shutdown e chiaria com a entrada flutuando) |
+| 🔀 Volume por rota | `vol_bt` e `vol_local` independentes na NVS: ao trocar BT↔alto-falante, salva o volume da rota antiga e carrega o da nova (slider e teclas do fone ajustam a rota ativa). A conversão 16→8 bits da rota local usa **noise shaping delta-sigma de 1ª ordem** (ruído de quantização empurrado p/ fora da banda audível), para que volumes baixos em amps de ganho alto saiam como música limpa, não estática. O DAC permanece alimentado com silêncio em qualquer rota (o amp não tem shutdown e chiaria com a entrada flutuando) |
 | 🎧 Botões do fone (AVRCP Target) | Play/pause/stop/next/prev do fone controlam o player; vol± do fone sincroniza o volume do app |
 | 📁 Navegador de arquivos | Pastas + arquivos `.wav` do SD, rolagem por arrasto |
 | 🔉 Alto-falante local | DAC 8 bits (GPIO26 → SC8002D) — **desligado por padrão** (v1.1: BT é a saída principal); ativável em *Ajustes* |
@@ -201,7 +201,8 @@ mkdir wav; for f in *.mp3; do ffmpeg -i "$f" -ar 44100 -ac 2 -c:a pcm_s16le "wav
 | BT não encontra a caixa | A caixa precisa estar **visível/pareável**; aproxime e escaneie de novo. O filtro lista dispositivos com nome ou classe de áudio |
 | Conecta mas não sai som | Verifique o volume; o START do stream é retentado automaticamente (log "START novamente"). Se persistir, desconecte e reconecte pela tela BT |
 | Áudio "picota" no BT | Interferência 2,4 GHz (Wi-Fi próximo); o ring de 16 KB já absorve leituras do SD. Reduza a distância roteador/caixa |
-| Som distorcido no alto-falante local | Esperado: é um DAC de 8 bits + amp pequeno. Use o BT para qualidade cheia |
+| Som distorcido/chiado em amp EXTERNO no GPIO26 | O DAC é unipolar (0–3,3 V com bias ~1,6 V): amps com entrada **DC-coupled** saturam com esse offset. Insira um **capacitor série de 1–10 µF** (acoplamento AC) entre o GPIO26 e a entrada do amp. O SC8002D on-board já é AC-coupled |
+| Estática no lugar da música em volume baixo | Amplificador com ganho muito alto: use a rota local em 3–10% (o noise shaping da v1.3.7 mantém a música limpa mesmo com poucos LSBs); acima de ~50% o DAC fica perto do trilho e distorce naturalmente |
 
 Logs de diagnóstico saem pela serial (115200). O heap livre aparece em
 *Ajustes* e nos logs de boot.

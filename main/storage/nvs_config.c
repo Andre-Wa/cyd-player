@@ -21,7 +21,7 @@ static void config_defaults(void)
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.volume     = 65;
     s_cfg.vol_bt     = 65;
-    s_cfg.vol_local  = 25;   /* c/ taper quadrático ~= 6% efetivo no DAC */
+    s_cfg.vol_local  = 5;    /* linear + noise shaping; amps c/ ganho alto */
     s_cfg.local_out  = 0;    /* v1.1: Bluetooth é a saída principal */
     s_cfg.brightness = 90;
     s_cfg.auto_next  = 1;
@@ -58,10 +58,10 @@ esp_err_t appcfg_load(void)
     if (!have_vols) {   /* migração: volume antigo era o da rota BT */
         s_cfg.vol_bt = s_cfg.volume;
         s_cfg.vol_local = 25;
-    } else if (s_cfg.vol_local < 15) {
-        /* v1.3.5 migrou vol_local p/ 10, que com o taper vira ~1% efetivo
-         * (ruído de quantização). Sobe para uma faixa utilizável. */
-        s_cfg.vol_local = 25;
+    } else if (s_cfg.vol_local > 10) {
+        /* v1.3.7: taper removido (linear + noise shaping); valores herdados
+         * das curvas antigas ficariam estourados em amps de ganho alto. */
+        s_cfg.vol_local = 5;
     }
     if (nvs_get_u8(h, "local", &u8) == ESP_OK)      s_cfg.local_out = !!u8;
     if (nvs_get_u8(h, "bright", &u8) == ESP_OK)     s_cfg.brightness = u8 > 100 ? 100 : u8;

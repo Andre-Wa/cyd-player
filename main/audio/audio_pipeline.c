@@ -54,6 +54,7 @@ static volatile uint32_t s_total_s;
 static volatile bool s_bt_stream_started;
 
 static bool hwm_logged;
+static int32_t s_ds_acc;   /* acumulador de erro do delta-sigma (rota local) */
 static wav_dec_t s_dec;
 static char s_cur_path[PL_PATH_LEN];
 static audio_route_t s_route = ROUTE_NONE;
@@ -308,17 +309,7 @@ static void pipeline_task(void *arg)
             continue;
         }
 
-        /* rota local: taper quadrático (amp SC8002D + DAC 8 bits têm ganho
-         * alto), com piso em 3% efetivo: abaixo disso a amplitude cai em
-         * +/-1 LSB e vira ruído de quantização puro. */
-        int vol = s_volume;
-        if (route == ROUTE_LOCAL && vol > 0) {
-            vol = (vol * vol + 99) / 100;
-            if (vol < 3 && s_volume >= 8) {
-                vol = 3;
-            }
-        }
-        int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, vol);
+        int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, s_volume);
         if (frames <= 0) {
             /* fim da faixa */
             ESP_LOGI(TAG, "fim de %s", s_cur_path);
@@ -341,10 +332,21 @@ static void pipeline_task(void *arg)
              * o caminho do Bluetooth */
             local_dac_write(silence, 512, 0);
         } else {
-            /* downmix estéreo 16 bits -> mono 8 bits para o DAC */
+            /* Downmix estéreo 16 bits -> mono 8 bits com NOISE SHAPING
+             * delta-sigma de 1ª ordem: o erro de quantização é realimentado
+             * e empurrado para fora da banda audível. Sem isso, volumes
+             * baixos (amplificadores com ganho alto) viram ruído de
+             * quantização puro — a "estática" com música inaudível. */
             for (int i = 0; i < frames; i++) {
                 int32_t m = ((int32_t)pcm[i * 2] + (int32_t)pcm[i * 2 + 1]) / 2;
-                mono8[i] = (uint8_t)((m >> 8) + 128);
+                int32_t x = m + s_ds_acc;
+                int32_t y = (x + (128 << 8)) >> 8;
+                if (y < 0) y = 0;
+                if (y > 255) y = 255;
+                s_ds_acc = x - (y << 8);
+                if (s_ds_acc > 512) s_ds_acc = 512;      /* anti-windup */
+                if (s_ds_acc < -512) s_ds_acc = -512;
+                mono8[i] = (uint8_t)y;
             }
             local_dac_write(mono8, frames, 500);
         }
