@@ -52,6 +52,15 @@ esp_err_t appcfg_load(void)
     if (nvs_get_u8(h, "bright", &u8) == ESP_OK)     s_cfg.brightness = u8 > 100 ? 100 : u8;
     if (nvs_get_u8(h, "autonext", &u8) == ESP_OK)   s_cfg.auto_next = !!u8;
     if (nvs_get_u8(h, "lastidx", &u8) == ESP_OK)    s_cfg.last_index = u8;
+    if (nvs_get_u8(h, "orientok", &u8) == ESP_OK)   s_cfg.orient_ok = !!u8;
+    if (nvs_get_u8(h, "xform", &u8) == ESP_OK) {
+        s_cfg.lcd_xform = u8 > 5 ? 0 : u8;
+    } else {
+        uint8_t r180 = 0;   /* migração da v1.2.2 */
+        if (nvs_get_u8(h, "rot180", &r180) == ESP_OK && r180) {
+            s_cfg.lcd_xform = 1;
+        }
+    }
 
     sz = sizeof(s_cfg.root_dir);
     nvs_get_str(h, "rootdir", s_cfg.root_dir, &sz);
@@ -104,6 +113,8 @@ esp_err_t appcfg_save(void)
     nvs_set_u8(h, "bright", s_cfg.brightness);
     nvs_set_u8(h, "autonext", !!s_cfg.auto_next);
     nvs_set_u8(h, "lastidx", s_cfg.last_index);
+    nvs_set_u8(h, "orientok", !!s_cfg.orient_ok);
+    nvs_set_u8(h, "xform", s_cfg.lcd_xform);
     nvs_set_str(h, "rootdir", s_cfg.root_dir);
     nvs_set_str(h, "lasttrack", s_cfg.last_track);
 

@@ -33,6 +33,11 @@ typedef struct {
     /* calibração do touch: xs = c0*rx + c1*ry + c2 ; ys = c3*rx + c4*ry + c5 */
     bool     has_calib;
     float    calib[6];
+
+    /* orientação do painel (v1.3): 0/1 = direto (MADCTL paisagem/180),
+     * 2..5 = transposição por software p/ painéis que ignoram o bit MV */
+    uint8_t  lcd_xform;
+    uint8_t  orient_ok;   /* orientação já confirmada pelo usuário */
 } app_config_t;
 
 /* Versão do esquema de configuração (migração automática na NVS).

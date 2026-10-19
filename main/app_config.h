@@ -26,10 +26,10 @@
 
 #define LCD_H_RES           320
 #define LCD_V_RES           240
-/* 20 MHz: margem segura para o latch confiável dos comandos de init.
- * (A 40 MHz algumas unidades apresentam falha intermitente em comandos
- * de 1 parâmetro, ex.: MADCTL — sintoma: tela fica em retrato.) */
-#define LCD_PCLK_HZ         (20 * 1000 * 1000)
+/* 40 MHz com CS/DC manuais (modelo TFT_eSPI/Adafruit, comprovado no CYD).
+ * Se houver instabilidade de escrita em cabos/unidades marginais, reduza
+ * para 20 MHz. */
+#define LCD_PCLK_HZ         (40 * 1000 * 1000)
 
 /* MADCTL: paisagem 320x240 + ordem de cor.
  *   0x28 = MV|BGR  (padrão CYD: paisagem, USB à esquerda, cores BGR)
@@ -93,7 +93,7 @@
 
 /* ===================== Aplicação ========================================== */
 #define APP_BT_DEVICE_NAME  "CYD Audio Player"
-#define APP_VERSION         "1.1.0"
+#define APP_VERSION         "1.3.0"
 
 /* Compile com -DAPP_BT_ENABLE=0 para builds sem Bluetooth (ex.: emulador
  * QEMU, que não possui rádio). Em hardware real, mantenha 1. */

@@ -8,6 +8,7 @@
 #include "app_types.h"
 #include "app_config.h"
 #include "nvs_config.h"
+#include "lcd_spi_driver.h"
 #include "sd_card.h"
 #include "esp_heap_caps.h"
 
@@ -47,6 +48,9 @@ static void settings_draw(gfx_canvas_t *c)
 
     snprintf(s, sizeof(s), "Auto-avancar: %s", cfg->auto_next ? "SIM" : "NAO");
     gfx_button(c, 8, ROW_AUTO, 196, 26, s, cfg->auto_next);
+
+    snprintf(s, sizeof(s), "Tela: modo %d", cfg->lcd_xform);
+    gfx_button(c, 212, 158, 100, 26, s, cfg->lcd_xform >= 2);
 
     gfx_button(c, 212, ROW_LOC, 100, 56, NULL, false);
     gfx_icon(c, ICON_CHECK, 232, ROW_LOC + 28, 13, COL_ACCENT);
@@ -117,6 +121,12 @@ static void settings_touch(const touch_evt_t *ev)
         cfg->auto_next = !cfg->auto_next;
         appcfg_save();
         ui_invalidate_all();
+    } else if (gfx_in_rect(x, y, 212, 158, 100, 26)) {
+        cfg->lcd_xform = (cfg->lcd_xform + 1) % 6;
+        lcd_set_xform(cfg->lcd_xform);
+        cfg->has_calib = 0;      /* touch precisa recalibrar p/ nova orientação */
+        appcfg_save();
+        ui_show(SCREEN_CALIB);
     } else if (gfx_in_rect(x, y, 212, ROW_LOC, 100, 56)) {
         ui_show(SCREEN_CALIB);
     } else if (ui_back_button_hit(x, y)) {

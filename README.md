@@ -52,10 +52,15 @@ Tudo definido em [`main/app_config.h`](main/app_config.h).
 >   (`0x20`) se vermelho/azul estiverem trocados.
 > - `LCD_INVERT_COLORS 0` — se as cores parecerem "negativo fotográfico",
 >   mude para `1`.
-> - No boot o driver **relê o painel e registra no log serial** o ID do
->   controlador (`DIAG RDDID`, ILI9341 ≈ `00 93 41`) e o MADCTL gravado
->   (`DIAG RDDMADCTL`, esperado `0x28`). Se a geometria ficar errada, esses
->   dois logs dizem exatamente o que o painel latchou.
+> - **v1.2:** a inicialização/registros usam CS e DC controlados por GPIO
+>   (modelo TFT_eSPI/Adafruit), porque em algumas unidades o caminho
+>   `esp_lcd panel_io` não latchava comandos *com parâmetro* (MADCTL) —
+>   sintoma: conteúdo paisagem aparecendo girado/retrato e memória do
+>   painel parcialmente não sobrescrita.
+> - No boot o driver **verifica por readback** e loga:
+>   `MADCTL 28 confirmado por readback` (ou `NÃO latchou`, com retry 3×),
+>   além de `DIAG RDDID/RDDMADCTL/RDCOLMOD`. Esses logs identificam o
+>   controlador e o estado real do painel — envie-os em caso de problema.
 
 ## 3. Arquitetura (conforme especificação)
 
@@ -135,7 +140,7 @@ Pré-requisito: **ESP-IDF v5.4.x** instalado
 Outras versões 5.x devem funcionar; em caso de erro de API, use a v5.4.
 
 ```bash
-cd cyd-audio-player
+cd cyd_audio_player
 idf.py set-target esp32      # só na primeira vez
 idf.py build
 
@@ -222,5 +227,12 @@ Logs de diagnóstico saem pela serial (115200). O heap livre aparece em
 - `APP_BT_ENABLE=0` e `LCD_HW_PRESENT=0` em `app_config.h` geram um build
   sem rádio/display — útil para testes de lógica no QEMU
   (`qemu-system-xtensa -machine esp32`).
+- **v1.2 (display):** após uma unidade real reportar que comandos com
+  parâmetro não latchavam via `esp_lcd panel_io` (MADCTL ignorado → tela
+  em retrato + resíduo de conteúdo anterior), o driver passou a escrever
+  registros com CS/DC por GPIO e polling (sequência clássica ILI9341), com
+  verificação por readback e retry. O flush de pixels é polling em chunks
+  de 2 KB (CPU ~2 ms/tira a 40 MHz) — o pipeline de tiras sujas mantém a UI
+  fluida mesmo sem DMA.
 - A fonte 8×16 é gerada por `tools/gen_font.py` (Pillow + DejaVu Sans Mono
   Bold); títulos usam escala 2× (dobrada em pixels).

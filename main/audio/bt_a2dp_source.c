@@ -595,6 +595,7 @@ esp_err_t bt_audio_init(void)
     /* AVRCP CT + TG (volume absoluto) */
     esp_avrc_ct_init();
     esp_avrc_ct_register_callback(avrc_ct_cb);
+    esp_avrc_tg_init();
     esp_avrc_rn_evt_cap_mask_t evt_set = {0};
     esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
                                        ESP_AVRC_RN_VOLUME_CHANGE);

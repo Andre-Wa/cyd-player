@@ -19,6 +19,7 @@ idf_component_register(
         "ui/screens/bt_screen.c"
         "ui/screens/settings_screen.c"
         "ui/screens/calib_screen.c"
+        "ui/screens/orient_screen.c"
     INCLUDE_DIRS
         "."
         "storage"

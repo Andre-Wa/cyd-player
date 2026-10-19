@@ -20,6 +20,7 @@ extern const ui_screen_t browser_screen;
 extern const ui_screen_t bt_screen;
 extern const ui_screen_t settings_screen;
 extern const ui_screen_t calib_screen;
+extern const ui_screen_t orient_screen;
 
 static const char *TAG = "ui";
 
@@ -247,7 +248,7 @@ static void ui_render_task(void *arg)
 
 static void touch_task(void *arg)
 {
-    bool pressed = false, dragging = false;
+    bool pressed = false, dragging = false, long_sent = false;
     int px = 0, py = 0, lx = 0, ly = 0;
     uint16_t prx = 0, pry = 0;
     int64_t t0 = 0;
@@ -260,6 +261,7 @@ static void touch_task(void *arg)
         if (down && !pressed) {
             pressed = true;
             dragging = false;
+            long_sent = false;
             px = lx = x;
             py = ly = y;
             prx = rx;
@@ -269,6 +271,12 @@ static void touch_task(void *arg)
             ev.x = x; ev.y = y; ev.rx = rx; ev.ry = ry;
             xQueueSend(s_touch_q, &ev, 0);
         } else if (down && pressed) {
+            if (!long_sent && ui_now_ms() - t0 >= 1200) {
+                long_sent = true;
+                ev.type = TEV_LONG;
+                ev.x = px; ev.y = py; ev.rx = prx; ev.ry = pry;
+                xQueueSend(s_touch_q, &ev, 0);
+            }
             int dx = x - lx, dy = y - ly;
             if (!dragging && (abs(x - px) > 10 || abs(y - py) > 10)) {
                 dragging = true;
@@ -283,7 +291,7 @@ static void touch_task(void *arg)
             }
         } else if (!down && pressed) {
             pressed = false;
-            if (!dragging && ui_now_ms() - t0 < 800) {
+            if (!dragging && !long_sent && ui_now_ms() - t0 < 800) {
                 ev.type = TEV_TAP;
                 ev.x = px; ev.y = py; ev.rx = prx; ev.ry = pry;
                 xQueueSend(s_touch_q, &ev, 0);
@@ -309,6 +317,7 @@ void ui_init(void)
     s_screens[SCREEN_BT]       = &bt_screen;
     s_screens[SCREEN_SETTINGS] = &settings_screen;
     s_screens[SCREEN_CALIB]    = &calib_screen;
+    s_screens[SCREEN_ORIENT]   = &orient_screen;
 
     for (int i = 0; i < 2; i++) {
         s_buf[i] = heap_caps_malloc(LCD_STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);

@@ -5,6 +5,7 @@
 #include "bt_a2dp_source.h"
 #include "app_config.h"
 
+
 void ui_draw_header(gfx_canvas_t *c, const char *title)
 {
     gfx_fill(c, 0, 0, LCD_H_RES, HEADER_H, COL_PANEL);

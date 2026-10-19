@@ -7,9 +7,6 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
 
 #include "app_config.h"
 #include "lcd_spi_driver.h"
@@ -17,9 +14,13 @@
 
 static const char *TAG = "lcd";
 
-static esp_lcd_panel_io_handle_t s_io = NULL;
-static SemaphoreHandle_t s_flush_sem = NULL;   /* contador de conclusões */
-static volatile int s_pending = 0;             /* transmissões em voo */
+#if LCD_HW_PRESENT
+
+static spi_device_handle_t s_dev = NULL;
+
+/* Buffer de staging em RAM interna (DMA-capable): transações DMA não
+ * conseguem ler direto da flash (onde vivem arrays `const`). */
+static uint8_t s_io_buf[64];
 
 /* Comandos ILI9341 */
 #define LCD_CMD_SWRESET 0x01
@@ -32,74 +33,72 @@ static volatile int s_pending = 0;             /* transmissões em voo */
 #define LCD_CMD_RAMWR   0x2C
 #define LCD_CMD_MADCTL  0x36
 #define LCD_CMD_COLMOD  0x3A
+#define LCD_CMD_RDID    0x04
+#define LCD_CMD_RDMADCTL 0x0B
+#define LCD_CMD_RDCOLMOD 0x0C
 
-/* Sequência de inicialização do fabricante (baseada no driver ILI9341 do
- * projeto esp32-smartdisplay, validada para o painel do CYD). */
-typedef struct {
-    uint8_t cmd;
-    uint8_t data[16];
-    uint8_t len;
-    uint16_t delay_ms;
-} lcd_init_cmd_t;
+/* Tamanho dos chunks de cor por transação (<= max_transfer_sz do bus) */
+#define FLUSH_CHUNK 2048
 
-#if LCD_HW_PRESENT
-static const lcd_init_cmd_t s_init_cmds[] = {
-    {0xCF, {0x00, 0xAA, 0xE0}, 3, 0},
-    {0xED, {0x67, 0x03, 0x12, 0x81}, 4, 0},
-    {0xE8, {0x8A, 0x01, 0x78}, 3, 0},
-    {0xCB, {0x39, 0x2C, 0x00, 0x34, 0x02}, 5, 0},
-    {0xF7, {0x20}, 1, 0},
-    {0xEA, {0x00, 0x00}, 2, 0},
-    {0xC0, {0x23}, 1, 0},                  /* Power control 1 */
-    {0xC1, {0x11}, 1, 0},                  /* Power control 2 */
-    {0xC5, {0x43, 0x4C}, 2, 0},            /* VCOM 1 */
-    {0xC7, {0xA0}, 1, 0},                  /* VCOM 2 */
-    {0xB1, {0x00, 0x1B}, 2, 0},            /* Frame rate ~70 Hz */
-    {0xF2, {0x00}, 1, 0},                  /* 3Gamma off */
-    {0x26, {0x01}, 1, 0},                  /* Gamma curve 1 */
-    {0xE0, {0x1F, 0x36, 0x36, 0x3A, 0x0C, 0x05, 0x4F, 0x87,
-            0x3C, 0x08, 0x11, 0x35, 0x19, 0x13, 0x00}, 15, 0},
-    {0xE1, {0x00, 0x09, 0x09, 0x05, 0x13, 0x0A, 0x30, 0x78,
-            0x43, 0x07, 0x0E, 0x0A, 0x26, 0x2C, 0x1F}, 15, 0},
-    {0xB7, {0x07}, 1, 0},                  /* Entry mode */
-    {0xB6, {0x08, 0x82, 0x27}, 3, 0},      /* Display function */
-};
+/* ---------- primitivas SPI no modelo clássico (CS/DC por GPIO) ---------- */
 
-#endif /* LCD_HW_PRESENT (init cmds) */
+static inline void cs_low(void)  { gpio_set_level(LCD_PIN_CS, 0); }
+static inline void cs_high(void) { gpio_set_level(LCD_PIN_CS, 1); }
+static inline void dc_cmd(void)  { gpio_set_level(LCD_PIN_DC, 0); }
+static inline void dc_dat(void)  { gpio_set_level(LCD_PIN_DC, 1); }
 
-/* -------- callback de conclusão de transmissão de cor -------- */
-static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
-        esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
+static void spi_tx(const void *buf, int len)
 {
-    BaseType_t hp_woken = pdFALSE;
-    if (s_flush_sem) {
-        xSemaphoreGiveFromISR(s_flush_sem, &hp_woken);
+    const void *src = buf;
+    if (len <= (int)sizeof(s_io_buf)) {
+        /* copia p/ RAM interna: garante DMA-capable mesmo vindos da flash */
+        memcpy(s_io_buf, buf, (size_t)len);
+        src = s_io_buf;
     }
-    return hp_woken == pdTRUE;
+    spi_transaction_t t = {
+        .tx_buffer = src,
+        .length = (size_t)len * 8,
+    };
+    spi_device_polling_transmit(s_dev, &t);
 }
 
-#if LCD_HW_PRESENT
-/* Parâmetros estáticos (evita literais compostos em tx_param) */
-static const uint8_t s_madctl_val[] = { LCD_MADCTL };
-static const uint8_t s_colmod_565[] = { 0x55 };
-
-/* Diagnóstico: relê o ID do controlador e o MADCTL efetivamente gravado.
- * O ILI9341 devolve 1 byte "dummy" antes dos dados — por isso lemos a mais
- * e registramos tudo em hex no log. */
-static void lcd_readback_diag(void)
+static void spi_rx(void *buf, int len)
 {
-    uint8_t id[4] = {0};
-    uint8_t mad[3] = {0};
-    esp_err_t e1 = esp_lcd_panel_io_rx_param(s_io, 0x04 /* RDDID */, id, sizeof(id));
-    esp_err_t e2 = esp_lcd_panel_io_rx_param(s_io, 0x0B /* RDDMADCTL */, mad, sizeof(mad));
-    ESP_LOGI(TAG, "DIAG RDDID(%s): %02X %02X %02X %02X (ILI9341 espera ~00 93 41)",
-             esp_err_to_name(e1), id[0], id[1], id[2], id[3]);
-    ESP_LOGI(TAG, "DIAG RDDMADCTL(%s): %02X %02X %02X (esperado 0x%02X)",
-             esp_err_to_name(e2), mad[0], mad[1], mad[2], LCD_MADCTL);
+    int n = len > (int)sizeof(s_io_buf) ? (int)sizeof(s_io_buf) : len;
+    spi_transaction_t t = {
+        .rx_buffer = s_io_buf,
+        .length = (size_t)n * 8,
+    };
+    spi_device_polling_transmit(s_dev, &t);
+    memcpy(buf, s_io_buf, (size_t)n);
 }
-#endif /* LCD_HW_PRESENT */
 
-/* -------- backlight (LEDC PWM, GPIO21) -------- */
+/* comando + parâmetros sob UMA asserção de CS (sequência comprovada em
+ * ILI9341: é exatamente o que TFT_eSPI/Adafruit fazem) */
+static void lcd_cmd_p(uint8_t cmd, const uint8_t *params, int n)
+{
+    cs_low();
+    dc_cmd();
+    spi_tx(&cmd, 1);
+    if (params && n > 0) {
+        dc_dat();
+        spi_tx(params, n);
+    }
+    cs_high();
+}
+
+static void lcd_read(uint8_t cmd, uint8_t *out, int n)
+{
+    cs_low();
+    dc_cmd();
+    spi_tx(&cmd, 1);
+    dc_dat();
+    spi_rx(out, n);
+    cs_high();
+}
+
+/* ---------- backlight (LEDC PWM, GPIO21) ---------- */
+
 static void backlight_init(void)
 {
     ledc_timer_config_t timer = {
@@ -128,129 +127,231 @@ void lcd_set_backlight(uint8_t pct)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 
+/* ---------- verificação por readback ---------- */
+
+/* MADCTL adequado a cada modo de orientação */
+static uint8_t madctl_for_xform(uint8_t xf)
+{
+    if (xf == 0) {
+        return LCD_MADCTL;                     /* paisagem (MV|BGR) */
+    }
+    if (xf == 1) {
+        return (uint8_t)(LCD_MADCTL ^ 0xC0);   /* paisagem 180° */
+    }
+    return (uint8_t)(LCD_MADCTL & 0x08);       /* retrato nativo + transposição */
+}
+
+static void apply_madctl(void)
+{
+    uint8_t m = madctl_for_xform(appcfg_get()->lcd_xform);
+    lcd_cmd_p(LCD_CMD_MADCTL, &m, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    lcd_cmd_p(LCD_CMD_MADCTL, &m, 1);   /* 2º envio: segurança p/ clones */
+}
+
+void lcd_set_xform(uint8_t xf)
+{
+    appcfg_get()->lcd_xform = xf > 5 ? 0 : xf;
+    apply_madctl();
+}
+
+/* Readback apenas INFORMATIVO: muitos clones do CYD não trazem o SDO do
+ * painel conectado, e o MISO retorna crosstalk determinístico do clock
+ * (ex.: "06 78 00"). Não use para decisão — só a imagem confirma. */
+static void verify_madctl(uint8_t expected)
+{
+    uint8_t r[3] = {0};
+    lcd_read(LCD_CMD_RDMADCTL, r, 3);
+    ESP_LOGI(TAG, "readback MADCTL (informativo): %02X %02X %02X (escrito %02X)",
+             r[0], r[1], r[2], expected);
+}
+
+static void lcd_diag(void)
+{
+    uint8_t id[4] = {0}, mad[3] = {0}, cm[2] = {0};
+    lcd_read(LCD_CMD_RDID, id, 4);
+    lcd_read(LCD_CMD_RDMADCTL, mad, 3);
+    lcd_read(LCD_CMD_RDCOLMOD, cm, 2);
+    ESP_LOGI(TAG, "DIAG RDDID: %02X %02X %02X %02X (ILI9341 ~00 93 41)",
+             id[0], id[1], id[2], id[3]);
+    ESP_LOGI(TAG, "DIAG RDDMADCTL: %02X %02X %02X (esperado %02X)",
+             mad[0], mad[1], mad[2], LCD_MADCTL);
+    ESP_LOGI(TAG, "DIAG RDCOLMOD: %02X %02X (esperado x5)", cm[0], cm[1]);
+}
+
+/* ---------- init ---------- */
+
 esp_err_t lcd_init(void)
 {
-#if !LCD_HW_PRESENT
-    ESP_LOGW(TAG, "LCD_HW_PRESENT=0 — modo emulação, display desativado");
-    return ESP_OK;
-#else
-    s_flush_sem = xSemaphoreCreateCounting(8, 0);
-    if (!s_flush_sem) {
-        return ESP_ERR_NO_MEM;
-    }
+    /* CS e DC como GPIO comuns (controlados à mão) */
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << LCD_PIN_CS) | (1ULL << LCD_PIN_DC),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    ESP_ERROR_CHECK(gpio_config(&io));
+    cs_high();
+    dc_cmd();
 
-    /* SPI2 (HSPI) com pinos nativos: MOSI=13 MISO=12 SCLK=14 */
-    spi_bus_config_t bus_cfg = {
+    spi_bus_config_t bus = {
         .mosi_io_num = LCD_PIN_MOSI,
         .miso_io_num = LCD_PIN_MISO,
         .sclk_io_num = LCD_PIN_SCLK,
         .quadwp_io_num = GPIO_NUM_NC,
         .quadhd_io_num = GPIO_NUM_NC,
-        .max_transfer_sz = LCD_STRIP_BYTES * 2,
+        /* DMA é obrigatório: sem ele o host limita transações a 64 bytes
+         * ("txdata transfer > host maximum") e os pixels nunca chegam. */
+        .max_transfer_sz = FLUSH_CHUNK + 64,
     };
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO),
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_SPI_HOST, &bus, SPI_DMA_CH_AUTO),
                         TAG, "spi bus");
 
-    esp_lcd_panel_io_spi_config_t io_cfg = {
-        .cs_gpio_num = LCD_PIN_CS,
-        .dc_gpio_num = LCD_PIN_DC,
-        .spi_mode = 0,
-        .pclk_hz = LCD_PCLK_HZ,
-        .trans_queue_depth = 4,
-        .lcd_cmd_bits = 8,
-        .lcd_param_bits = 8,
-        .on_color_trans_done = on_color_trans_done,
+    spi_device_interface_config_t devcfg = {
+        .clock_speed_hz = LCD_PCLK_HZ,
+        .mode = 0,
+        .spics_io_num = -1,          /* CS por GPIO */
+        .queue_size = 2,
     };
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_SPI_HOST,
-                        &io_cfg, &s_io), TAG, "panel io");
+    ESP_RETURN_ON_ERROR(spi_bus_add_device(LCD_SPI_HOST, &devcfg, &s_dev),
+                        TAG, "spi device");
 
-    /* Reset por software + sequência do fabricante */
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_SWRESET, NULL, 0);
+    /* Sequência mínima e segura do ILI9341 (sem comandos de teste/vendor
+     * exóticos, que podem travar clones em modos errados) */
+    lcd_cmd_p(LCD_CMD_SWRESET, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(120));
-    for (size_t i = 0; i < sizeof(s_init_cmds) / sizeof(s_init_cmds[0]); i++) {
-        esp_lcd_panel_io_tx_param(s_io, s_init_cmds[i].cmd,
-                                  s_init_cmds[i].data, s_init_cmds[i].len);
-        if (s_init_cmds[i].delay_ms) {
-            vTaskDelay(pdMS_TO_TICKS(s_init_cmds[i].delay_ms));
-        }
-    }
-    /* Pixel format 16 bits + orientação paisagem (MADCTL enviado 2x: em
-     * algumas unidades o primeiro envio pós-reset não é latchado) */
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_COLMOD, s_colmod_565, 1);
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
+    lcd_cmd_p(LCD_CMD_SLPOUT, NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(120));
+
+    lcd_cmd_p(LCD_CMD_COLMOD, (const uint8_t[]){0x55}, 1);      /* RGB565 */
+    lcd_cmd_p(0xB1, (const uint8_t[]){0x00, 0x18}, 2);         /* frame rate */
+    lcd_cmd_p(0xB6, (const uint8_t[]){0x08, 0x82, 0x27}, 3);   /* disp func */
+    lcd_cmd_p(0xC0, (const uint8_t[]){0x23}, 1);               /* power 1 */
+    lcd_cmd_p(0xC1, (const uint8_t[]){0x10}, 1);               /* power 2 */
+    lcd_cmd_p(0xC5, (const uint8_t[]){0x3E, 0x28}, 2);         /* VCOM 1 */
+    lcd_cmd_p(0xC7, (const uint8_t[]){0x86}, 1);               /* VCOM 2 */
+    lcd_cmd_p(0x26, (const uint8_t[]){0x01}, 1);               /* gamma curve */
+    lcd_cmd_p(0xF2, (const uint8_t[]){0x00}, 1);               /* 3Gamma off */
+    static const uint8_t gamma_p[] = {0x1F, 0x36, 0x36, 0x3A, 0x0C, 0x05, 0x4F,
+                                      0x87, 0x3C, 0x08, 0x11, 0x35, 0x19, 0x13, 0x00};
+    static const uint8_t gamma_n[] = {0x00, 0x09, 0x09, 0x05, 0x13, 0x0A, 0x30,
+                                      0x78, 0x43, 0x07, 0x0E, 0x0A, 0x26, 0x2C, 0x1F};
+    lcd_cmd_p(0xE0, gamma_p, sizeof(gamma_p));
+    lcd_cmd_p(0xE1, gamma_n, sizeof(gamma_n));
 #if LCD_INVERT_COLORS
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_INVON, NULL, 0);
+    lcd_cmd_p(LCD_CMD_INVON, NULL, 0);
 #else
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_INVOFF, NULL, 0);
+    lcd_cmd_p(LCD_CMD_INVOFF, NULL, 0);
 #endif
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_SLPOUT, NULL, 0);
-    vTaskDelay(pdMS_TO_TICKS(120));
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_DISPON, NULL, 0);
-    vTaskDelay(pdMS_TO_TICKS(20));
 
-    lcd_readback_diag();
+    /* orientação salva na NVS (quiz da seta / Ajustes) */
+    apply_madctl();
+    verify_madctl(madctl_for_xform(appcfg_get()->lcd_xform));
+
+    lcd_cmd_p(LCD_CMD_DISPON, NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    lcd_diag();
 
     backlight_init();
     lcd_set_backlight(appcfg_get()->brightness);
 
-    ESP_LOGI(TAG, "ILI9341 320x240 inicializado (SPI2 @ %d MHz, DMA)",
+    ESP_LOGI(TAG, "ILI9341 320x240 inicializado (SPI2 @ %d MHz, CS/DC manuais)",
              LCD_PCLK_HZ / 1000000);
     return ESP_OK;
-#endif /* LCD_HW_PRESENT */
+}
+
+/* ---------- flush de área ---------- */
+
+/* Buffer de transposição (painéis que ignoram o bit MV): uma tira UI
+ * 320x16 vira uma janela de 16 colunas x 320 linhas do painel retrato. */
+static uint16_t s_tbuf[320 * LCD_STRIP_LINES];
+
+static esp_err_t flush_transposed(int y, int h, const uint16_t *buf, uint8_t t)
+{
+    const bool cinv = (t >= 4);          /* c = 239 - y */
+    const bool xinv = (t == 3 || t == 5);/* r = 319 - x */
+    int c0 = cinv ? (LCD_V_RES - 1 - (y + h - 1)) : y;
+    int c1 = cinv ? (LCD_V_RES - 1 - y) : (y + h - 1);
+
+    int n = 0;
+    for (int r = 0; r < LCD_H_RES; r++) {            /* linhas do painel */
+        int ux = xinv ? (LCD_H_RES - 1 - r) : r;     /* x na UI */
+        for (int c = c0; c <= c1; c++) {
+            int uy = cinv ? (LCD_V_RES - 1 - c) : c; /* y na UI */
+            s_tbuf[n++] = buf[(uy - y) * LCD_H_RES + ux];
+        }
+    }
+
+    const uint8_t ca[4] = { (uint8_t)(c0 >> 8), (uint8_t)(c0 & 0xFF),
+                            (uint8_t)(c1 >> 8), (uint8_t)(c1 & 0xFF) };
+    const uint8_t ra[4] = { 0, 0, (uint8_t)((LCD_H_RES - 1) >> 8),
+                            (uint8_t)((LCD_H_RES - 1) & 0xFF) };
+    cs_low();
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_CASET}, 1);
+    dc_dat(); spi_tx(ca, 4);
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_RASET}, 1);
+    dc_dat(); spi_tx(ra, 4);
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_RAMWR}, 1);
+    dc_dat();
+    int total = n * 2, off = 0;
+    while (off < total) {
+        int k = total - off > FLUSH_CHUNK ? FLUSH_CHUNK : total - off;
+        spi_tx((const uint8_t *)s_tbuf + off, k);
+        off += k;
+    }
+    cs_high();
+    return ESP_OK;
 }
 
 esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf)
 {
-#if !LCD_HW_PRESENT
-    (void)x; (void)y; (void)w; (void)h; (void)buf;
-    return ESP_OK;
-#else
-    if (!s_io) {
+    if (!s_dev) {
         return ESP_ERR_INVALID_STATE;
     }
-    uint8_t ca[4] = { x >> 8, x & 0xFF, (x + w - 1) >> 8, (x + w - 1) & 0xFF };
-    uint8_t ra[4] = { y >> 8, y & 0xFF, (y + h - 1) >> 8, (y + h - 1) & 0xFF };
-    esp_err_t err;
-    err = esp_lcd_panel_io_tx_param(s_io, LCD_CMD_CASET, ca, 4);
-    if (err != ESP_OK) {
-        return err;
+    uint8_t t = appcfg_get()->lcd_xform;
+    if (t >= 2 && x == 0 && w == LCD_H_RES) {
+        return flush_transposed(y, h, buf, t);
     }
-    err = esp_lcd_panel_io_tx_param(s_io, LCD_CMD_RASET, ra, 4);
-    if (err != ESP_OK) {
-        return err;
+    const uint8_t ca[4] = { (uint8_t)(x >> 8), (uint8_t)(x & 0xFF),
+                            (uint8_t)((x + w - 1) >> 8), (uint8_t)((x + w - 1) & 0xFF) };
+    const uint8_t ra[4] = { (uint8_t)(y >> 8), (uint8_t)(y & 0xFF),
+                            (uint8_t)((y + h - 1) >> 8), (uint8_t)((y + h - 1) & 0xFF) };
+
+    cs_low();
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_CASET}, 1);
+    dc_dat(); spi_tx(ca, 4);
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_RASET}, 1);
+    dc_dat(); spi_tx(ra, 4);
+    dc_cmd(); spi_tx((uint8_t[]){LCD_CMD_RAMWR}, 1);
+    dc_dat();
+    int total = w * h * 2;
+    int off = 0;
+    while (off < total) {
+        int n = total - off > FLUSH_CHUNK ? FLUSH_CHUNK : total - off;
+        spi_tx((const uint8_t *)buf + off, n);
+        off += n;
     }
-    s_pending++;
-    err = esp_lcd_panel_io_tx_color(s_io, LCD_CMD_RAMWR, buf, w * h * 2);
-    if (err != ESP_OK) {
-        s_pending--;
-    }
-    return err;
+    cs_high();
+    return ESP_OK;
+}
+
+void lcd_wait_one(void) { }
+void lcd_wait_all(void) { }
+
+#else  /* ---------- build sem display (emulador) ---------- */
+
+esp_err_t lcd_init(void)
+{
+    ESP_LOGW(TAG, "LCD_HW_PRESENT=0 — modo emulação, display desativado");
+    return ESP_OK;
+}
+void lcd_set_backlight(uint8_t pct) { (void)pct; }
+void lcd_set_xform(uint8_t xf) { (void)xf; }
+esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf)
+{
+    (void)x; (void)y; (void)w; (void)h; (void)buf;
+    return ESP_OK;
+}
+void lcd_wait_one(void) { }
+void lcd_wait_all(void) { }
+
 #endif /* LCD_HW_PRESENT */
-}
-
-void lcd_wait_one(void)
-{
-    if (s_pending > 0 && s_flush_sem) {
-        /* Timeout de segurança: se o callback de DMA nunca chegar (falha do
-         * peripheral/emulador), seguimos em frente em vez de travar a UI.
-         * Em hardware real a conclusão leva < 5 ms por tira. */
-        if (xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
-                ESP_LOGW(TAG, "flush LCD não concluído (timeout) — seguindo");
-            }
-        }
-        s_pending--;
-    }
-}
-
-void lcd_wait_all(void)
-{
-    while (s_pending > 0) {
-        lcd_wait_one();
-    }
-}

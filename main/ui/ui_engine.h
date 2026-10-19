@@ -22,6 +22,7 @@ typedef enum {
     SCREEN_BT,
     SCREEN_SETTINGS,
     SCREEN_CALIB,
+    SCREEN_ORIENT,
     SCREEN_COUNT,
 } screen_id_t;
 
@@ -30,6 +31,7 @@ typedef enum {
     TEV_RELEASE,
     TEV_TAP,
     TEV_DRAG,
+    TEV_LONG,   /* pressão mantida >= 1,2 s (uma vez por toque) */
 } touch_evt_type_t;
 
 typedef struct {

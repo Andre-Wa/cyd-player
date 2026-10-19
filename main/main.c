@@ -29,6 +29,7 @@
 #include "display/lcd_spi_driver.h"
 #include "display/touch_xpt2046.h"
 #include "ui/ui_engine.h"
+#include "ui/screens/screens_common.h"
 
 static const char *TAG = "app_main";
 
@@ -303,8 +304,11 @@ static void app_ctrl_task(void *arg)
 
         if (!s_boot_ui_done && now - boot_ms > 2500) {
             s_boot_ui_done = true;
-            if (!appcfg_get()->has_calib) {
-                ui_show(SCREEN_CALIB);    /* primeira vez: calibrar o touch */
+            app_config_t *cfg = appcfg_get();
+            if (!cfg->orient_ok) {
+                ui_show(SCREEN_ORIENT);     /* quiz da seta (1ª vez) */
+            } else if (!cfg->has_calib) {
+                ui_show(SCREEN_CALIB);      /* primeira vez: calibrar o touch */
             } else {
                 ui_show(SCREEN_PLAYER);
             }
@@ -344,6 +348,7 @@ void app_main(void)
     if (appcfg_get()->has_calib) {
         xpt2046_set_calibration(appcfg_get()->calib);
     }
+    lcd_set_xform(appcfg_get()->lcd_xform);
     ui_init();
 
     /* cartão SD (não fatal) */
