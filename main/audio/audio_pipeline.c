@@ -14,6 +14,7 @@
 #include "freertos/ringbuf.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 
 #include "app_config.h"
 #include "app_types.h"
@@ -224,10 +225,15 @@ static void stop_track(void)
 
 static void pipeline_task(void *arg)
 {
-    int16_t *pcm = heap_caps_malloc(PCM_BLOCK_FRAMES * 2 * sizeof(int16_t), MALLOC_CAP_INTERNAL);
-    uint8_t *mono8 = heap_caps_malloc(PCM_BLOCK_FRAMES, MALLOC_CAP_INTERNAL);
-    if (!pcm || !mono8) {
-        ESP_LOGE(TAG, "sem memória para buffers do pipeline");
+    /* MALLOC_CAP_8BIT: garante DRAM. Com INTERNAL puro o alocador pode
+     * entregar IRAM, que NÃO aceita stores de 8/16 bits -> LoadStoreError
+     * no primeiro store de amostra (crash reproduzível em toda reprodução). */
+    int16_t *pcm = heap_caps_malloc(PCM_BLOCK_FRAMES * 2 * sizeof(int16_t),
+                                    MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    uint8_t *mono8 = heap_caps_malloc(PCM_BLOCK_FRAMES,
+                                      MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (!pcm || !mono8 || !esp_ptr_in_dram(pcm) || !esp_ptr_in_dram(mono8)) {
+        ESP_LOGE(TAG, "sem memória DRAM para buffers do pipeline");
         vTaskDelete(NULL);
         return;
     }
