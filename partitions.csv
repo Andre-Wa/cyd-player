@@ -1,0 +1,6 @@
+# Tabela de partições para flash de 4 MB (ESP32-WROOM-32 do CYD)
+# NVS com 48 KB: guarda configurações do app + chaves de pareamento Bluetooth (Bluedroid)
+# Name,    Type, SubType, Offset,  Size,   Flags
+nvs,       data, nvs,     0x9000,  0xC000,
+phy_init,  data, phy,     0x15000, 0x1000,
+factory,   app,  factory, 0x20000, 0x300000,
