@@ -264,9 +264,8 @@ static void pipeline_task(void *arg)
     }
 
     uint32_t frames_since_prog = 0;
-    uint8_t silence[256];
+    uint8_t silence[2048];
     memset(silence, 0x80, sizeof(silence));
-    bool dac_idle_silence = false;
 
     while (true) {
         /* ---- comandos ---- */
@@ -293,16 +292,13 @@ static void pipeline_task(void *arg)
 
         /* ---- geração de áudio ---- */
         if (!s_playing || s_paused) {
-            /* ocioso/pausado: empurra nível médio UMA vez no DAC (evita
-             * estalos sem manter escritas contínuas) */
-            if (appcfg_get()->local_out && !bt_is_connected() && !dac_idle_silence) {
-                local_dac_write(silence, sizeof(silence), 100);
-                dac_idle_silence = true;
-            }
-            vTaskDelay(pdMS_TO_TICKS(50));
+            /* Segura o DAC no nível médio: o SC8002D não tem shutdown e a
+             * entrada flutuando/zerada chia continuamente. Alimentado a
+             * ~44,1 kB/s (2048 B a cada 40 ms) o pino nunca drena. */
+            local_dac_write(silence, sizeof(silence), 60);
+            vTaskDelay(pdMS_TO_TICKS(40));
             continue;
         }
-        dac_idle_silence = false;
 
         audio_route_t route = current_route();
         set_route(route);
@@ -313,10 +309,14 @@ static void pipeline_task(void *arg)
         }
 
         /* rota local: taper quadrático (amp SC8002D + DAC 8 bits têm ganho
-         * alto e poucos passos úteis no começo do slider) */
+         * alto), com piso em 3% efetivo: abaixo disso a amplitude cai em
+         * +/-1 LSB e vira ruído de quantização puro. */
         int vol = s_volume;
         if (route == ROUTE_LOCAL && vol > 0) {
             vol = (vol * vol + 99) / 100;
+            if (vol < 3 && s_volume >= 8) {
+                vol = 3;
+            }
         }
         int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, vol);
         if (frames <= 0) {
@@ -336,6 +336,10 @@ static void pipeline_task(void *arg)
                 /* ring cheio e stream parado: descarta para não travar */
                 ESP_LOGD(TAG, "ring cheio — bloco descartado");
             }
+            /* mantém o pino do DAC no nível médio (amp sem shutdown);
+             * timeout 0: só escreve se houver descritor livre, nunca atrasa
+             * o caminho do Bluetooth */
+            local_dac_write(silence, 512, 0);
         } else {
             /* downmix estéreo 16 bits -> mono 8 bits para o DAC */
             for (int i = 0; i < frames; i++) {

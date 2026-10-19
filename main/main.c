@@ -245,8 +245,7 @@ static void handle_cmd(const app_cmd_t *c)
         post_evt(EVT_NONE, 0, NULL);       /* só invalida a UI */
         break;
     case CMD_SET_LOCAL_OUT:
-        cfg->local_out = !!c->val;
-        local_dac_enable(cfg->local_out);
+        cfg->local_out = !!c->val;   /* DAC segue alimentado com silêncio */
         appcfg_save();
         post_evt(EVT_NONE, 0, NULL);
         break;
