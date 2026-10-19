@@ -22,6 +22,7 @@ operação **sem PSRAM**.
 | 🔊 Bluetooth A2DP **Source** | **Saída principal**: o CYD **transmite** áudio (SBC 44,1 kHz) para caixas/fones BT, com retry automático do START do stream |
 | 🔍 Pareamento pela tela | Varredura GAP (**iniciada automaticamente no boot** se não houver dispositivo salvo), lista com RSSI, conexão com 1 toque, reconexão automática do último dispositivo |
 | 🎚 Volume absoluto (AVRCP) | O volume do app controla o do alto-falante — e vice-versa (sincronizado) |
+| 🎧 Botões do fone (AVRCP Target) | Play/pause/stop/next/prev do fone controlam o player; vol± do fone sincroniza o volume do app |
 | 📁 Navegador de arquivos | Pastas + arquivos `.wav` do SD, rolagem por arrasto |
 | 🔉 Alto-falante local | DAC 8 bits (GPIO26 → SC8002D) — **desligado por padrão** (v1.1: BT é a saída principal); ativável em *Ajustes* |
 | 🖱 Calibração de touch | Assistente de 4 pontos (transformação afim, mínimos quadrados) gravado na NVS — **executado automaticamente no primeiro boot** |
@@ -204,7 +205,14 @@ mkdir wav; for f in *.mp3; do ffmpeg -i "$f" -ar 44100 -ac 2 -c:a pcm_s16le "wav
 Logs de diagnóstico saem pela serial (115200). O heap livre aparece em
 *Ajustes* e nos logs de boot.
 
-## 9. Ideias de extensão
+## 9. Transferir músicas sem tirar o SD (estudo)
+
+USB MTP/MSC é **inviável** no ESP32 clássico (sem periférico USB device);
+servidor HTTP/FTP via Wi-Fi é **viável** com “modo transferência” dedicado
+(RAM/coex com BT é o ponto crítico). Estudo completo com orçamento de memória,
+UX proposta e plano em fases: [`docs/transferencia_arquivos.md`](docs/transferencia_arquivos.md).
+
+## 10. Ideias de extensão
 
 - **MP3/AAC:** integrar o componente [`esp_new_codec`](https://components.espressif.com/components/espressif/esp_new_codec)
   (Helix MP3, ~30 KB heap) atrás da interface `wav_decoder` — o pipeline já
@@ -216,7 +224,7 @@ Logs de diagnóstico saem pela serial (115200). O heap livre aparece em
   já percorre chunks desconhecidos.
 - **Brilho automático:** LDR em GPIO34 + `lcd_set_backlight()`.
 
-## 10. Notas de implementação
+## 11. Notas de implementação
 
 - Os callbacks do Bluedroid rodam na tarefa BTC; **nunca** chamam APIs da
   pilha diretamente — enfileiram itens leves para a tarefa `bt_work`

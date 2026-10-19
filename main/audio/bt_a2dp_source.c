@@ -294,6 +294,50 @@ static int32_t a2d_data_cb(uint8_t *buf, int32_t len)
     return len;
 }
 
+/* AVRCP Target: o FONE é o controle remoto (botões de mídia e volume).
+ * Os callbacks rodam na tarefa BTC: apenas enfileiram comandos p/ o
+ * controlador da aplicação (nunca chamam a pilha daqui). */
+static void avrc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param)
+{
+    switch (event) {
+    case ESP_AVRC_TG_PASSTHROUGH_CMD_EVT: {
+        if (param->psth_cmd.key_state != ESP_AVRC_PT_CMD_STATE_PRESSED) {
+            break;
+        }
+        app_cmd_t c = {0};
+        switch (param->psth_cmd.key_code) {
+        case ESP_AVRC_PT_CMD_PLAY:     c.id = CMD_PLAY;  break;
+        case ESP_AVRC_PT_CMD_PAUSE:    c.id = CMD_PAUSE; break;
+        case ESP_AVRC_PT_CMD_STOP:     c.id = CMD_STOP;  break;
+        case ESP_AVRC_PT_CMD_FORWARD:  c.id = CMD_NEXT;  break;
+        case ESP_AVRC_PT_CMD_BACKWARD: c.id = CMD_PREV;  break;
+        default:
+            ESP_LOGD(TAG, "AVRCP TG passthrough ignorado: 0x%02x",
+                     param->psth_cmd.key_code);
+            return;
+        }
+        ESP_LOGI(TAG, "AVRCP TG: tecla de midia do fone -> cmd %d", c.id);
+        if (g_ui_to_audio_queue) {
+            xQueueSend(g_ui_to_audio_queue, &c, 0);
+        }
+        break;
+    }
+    case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT: {
+        /* usuário mexeu no volume do fone: sincroniza o volume do app */
+        uint8_t v100 = (uint8_t)((param->set_abs_vol.volume * 100) / 127);
+        ESP_LOGI(TAG, "AVRCP TG: volume do fone %u/127 -> %u%%",
+                 param->set_abs_vol.volume, v100);
+        app_cmd_t c = { .id = CMD_SET_VOLUME, .val = v100 };
+        if (g_ui_to_audio_queue) {
+            xQueueSend(g_ui_to_audio_queue, &c, 0);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 static void avrc_ct_cb(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_param_t *param)
 {
     switch (event) {
@@ -596,6 +640,16 @@ esp_err_t bt_audio_init(void)
     esp_avrc_ct_init();
     esp_avrc_ct_register_callback(avrc_ct_cb);
     esp_avrc_tg_init();
+    esp_avrc_tg_register_callback(avrc_tg_cb);
+    /* aceita play/pause/stop/forward/backward vindos do fone */
+    esp_avrc_psth_bit_mask_t psth = {0};
+    const uint8_t keys[] = { ESP_AVRC_PT_CMD_PLAY, ESP_AVRC_PT_CMD_PAUSE,
+                             ESP_AVRC_PT_CMD_STOP, ESP_AVRC_PT_CMD_FORWARD,
+                             ESP_AVRC_PT_CMD_BACKWARD };
+    for (size_t i = 0; i < sizeof(keys); i++) {
+        psth.bits[keys[i] >> 4] |= (uint16_t)(1u << (keys[i] & 0x0F));
+    }
+    esp_avrc_tg_set_psth_cmd_filter(ESP_AVRC_PSTH_FILTER_SUPPORTED_CMD, &psth);
     esp_avrc_rn_evt_cap_mask_t evt_set = {0};
     esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
                                        ESP_AVRC_RN_VOLUME_CHANGE);
