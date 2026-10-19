@@ -15,9 +15,25 @@
 #define BTN_H     30
 #define SAVE_Y    86
 #define SAVE_H    28
-#define LIST_Y    120
-#define LIST_H    24
-#define LIST_ROWS 4                    /* 120 + 4*24 = 216 */
+#define DEV_LIST_Y    120
+#define DEV_ROW_H    24
+#define DEV_ROWS 4                    /* 120 + 4*24 = 216 */
+
+static int s_dev_off;                  /* primeiro dispositivo visível */
+
+static void clamp_dev_off(void)
+{
+    int max_off = g_ui.n_devices - DEV_ROWS;
+    if (max_off < 0) {
+        max_off = 0;
+    }
+    if (s_dev_off > max_off) {
+        s_dev_off = max_off;
+    }
+    if (s_dev_off < 0) {
+        s_dev_off = 0;
+    }
+}
 
 static void bt_draw(gfx_canvas_t *c)
 {
@@ -69,21 +85,27 @@ static void bt_draw(gfx_canvas_t *c)
     }
 
     /* lista de dispositivos descobertos */
-    gfx_text(c, 8, LIST_Y - 18, "Dispositivos encontrados:", COL_MUTED, 1);
+    gfx_text(c, 8, DEV_LIST_Y - 18, "Dispositivos encontrados:", COL_MUTED, 1);
     if (g_ui.n_devices == 0) {
-        gfx_text(c, 16, LIST_Y + 8,
+        gfx_text(c, 16, DEV_LIST_Y + 8,
                  scanning ? "aguarde..." : "toque em 'Escanear'", COL_MUTED, 1);
     }
-    for (int i = 0; i < g_ui.n_devices && i < LIST_ROWS; i++) {
-        int y = LIST_Y + i * LIST_H;
-        gfx_fill(c, 4, y, LCD_H_RES - 8, LIST_H - 3, COL_PANEL);
-        gfx_icon(c, g_ui.devices[i].rendering ? ICON_SPEAKER : ICON_BT,
-                 16, y + 10, 12,
-                 g_ui.devices[i].rendering ? COL_BT : COL_MUTED);
-        gfx_text_fit(c, 30, y + 3, 220, g_ui.devices[i].name, COL_TEXT, 1);
-        char r[8];
-        snprintf(r, sizeof(r), "%ddB", g_ui.devices[i].rssi);
+    clamp_dev_off();
+    for (int i = 0; i < DEV_ROWS && s_dev_off + i < g_ui.n_devices; i++) {
+        const typeof(g_ui.devices[0]) *d = &g_ui.devices[s_dev_off + i];
+        int y = DEV_LIST_Y + i * DEV_ROW_H;
+        gfx_fill(c, 4, y, LCD_H_RES - 8, DEV_ROW_H - 3, COL_PANEL);
+        gfx_icon(c, d->rendering ? ICON_SPEAKER : ICON_BT,
+                 16, y + 10, 12, d->rendering ? COL_BT : COL_MUTED);
+        gfx_text_fit(c, 30, y + 3, 220, d->name, COL_TEXT, 1);
+        char r[16];
+        snprintf(r, sizeof(r), "%ddB", d->rssi);
         gfx_text(c, 268, y + 3, r, COL_MUTED, 1);
+    }
+    if (g_ui.n_devices > DEV_ROWS) {
+        char pg[24];
+        snprintf(pg, sizeof(pg), "%d/%d", s_dev_off + 1, g_ui.n_devices);
+        gfx_text(c, 270, DEV_LIST_Y - 18, pg, COL_MUTED, 1);
     }
 
     /* rodapé */
@@ -105,6 +127,15 @@ static void send_connect(const uint8_t mac[6])
 
 static void bt_touch(const touch_evt_t *ev)
 {
+    if (ev->type == TEV_DRAG) {
+        int rows = -ev->dy / DEV_ROW_H;
+        if (rows != 0) {
+            s_dev_off += rows;
+            clamp_dev_off();
+            ui_invalidate_all();
+        }
+        return;
+    }
     if (ev->type != TEV_TAP) {
         return;
     }
@@ -129,8 +160,8 @@ static void bt_touch(const touch_evt_t *ev)
         send_connect(cfg->bt_mac);
         return;
     }
-    if (y >= LIST_Y && y < LIST_Y + LIST_ROWS * LIST_H) {
-        int i = (y - LIST_Y) / LIST_H;
+    if (y >= DEV_LIST_Y && y < DEV_LIST_Y + DEV_ROWS * DEV_ROW_H) {
+        int i = s_dev_off + (y - DEV_LIST_Y) / DEV_ROW_H;
         if (i < g_ui.n_devices) {
             send_connect(g_ui.devices[i].mac);
         }

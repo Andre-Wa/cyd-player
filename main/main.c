@@ -25,6 +25,7 @@
 #include "audio/audio_pipeline.h"
 #include "audio/bt_a2dp_source.h"
 #include "audio/playlist.h"
+#include "audio/local_dac.h"
 #include "display/lcd_spi_driver.h"
 #include "display/touch_xpt2046.h"
 #include "ui/ui_engine.h"
@@ -190,13 +191,11 @@ static void handle_cmd(const app_cmd_t *c)
             audio_pipeline_set_paused(true);
             bt_avrcp_passthrough(ESP_AVRC_PT_CMD_PAUSE, true);
             bt_avrcp_passthrough(ESP_AVRC_PT_CMD_PAUSE, false);
-        } else if (s_cur_path[0] && !audio_pipeline_is_playing() &&
-                   audio_pipeline_total_s() > 0 &&
-                   audio_pipeline_elapsed_s() < audio_pipeline_total_s()) {
+        } else if (audio_pipeline_is_active()) {   /* pausada: retomar */
             audio_pipeline_set_paused(false);
             bt_avrcp_passthrough(ESP_AVRC_PT_CMD_PLAY, true);
             bt_avrcp_passthrough(ESP_AVRC_PT_CMD_PLAY, false);
-        } else {
+        } else {                                   /* parada: iniciar */
             play_default_track();
         }
         break;
@@ -238,6 +237,7 @@ static void handle_cmd(const app_cmd_t *c)
         break;
     case CMD_SET_LOCAL_OUT:
         cfg->local_out = !!c->val;
+        local_dac_enable(cfg->local_out);
         appcfg_save();
         post_evt(EVT_NONE, 0, NULL);
         break;
@@ -293,6 +293,11 @@ static void app_ctrl_task(void *arg)
             if (cfg->has_bt) {
                 ESP_LOGI(TAG, "reconectando ao último dispositivo: %s", cfg->bt_name);
                 bt_connect(cfg->bt_mac);
+            } else {
+                /* Bluetooth é a saída principal: já inicia a varredura para
+                 * deixar a lista de dispositivos pronta na tela BT. */
+                ESP_LOGI(TAG, "nenhum dispositivo salvo — iniciando varredura BT");
+                bt_start_discovery();
             }
         }
 

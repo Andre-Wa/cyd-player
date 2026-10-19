@@ -20,7 +20,7 @@ static void config_defaults(void)
 {
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.volume     = 65;
-    s_cfg.local_out  = 1;
+    s_cfg.local_out  = 0;    /* v1.1: Bluetooth é a saída principal */
     s_cfg.brightness = 90;
     s_cfg.auto_next  = 1;
     strlcpy(s_cfg.root_dir, SD_MOUNT_POINT, sizeof(s_cfg.root_dir));
@@ -45,6 +45,8 @@ esp_err_t appcfg_load(void)
 
     size_t sz;
     uint8_t u8;
+    uint8_t ver = 0;
+    nvs_get_u8(h, "ver", &ver);
     if (nvs_get_u8(h, "volume", &u8) == ESP_OK)     s_cfg.volume = u8 > 100 ? 100 : u8;
     if (nvs_get_u8(h, "local", &u8) == ESP_OK)      s_cfg.local_out = !!u8;
     if (nvs_get_u8(h, "bright", &u8) == ESP_OK)     s_cfg.brightness = u8 > 100 ? 100 : u8;
@@ -71,6 +73,16 @@ esp_err_t appcfg_load(void)
     }
 
     nvs_close(h);
+
+    /* Migração de versão: v2 torna o Bluetooth a saída principal */
+    if (ver < 2) {
+        s_cfg.local_out = 0;
+        ESP_LOGI(TAG, "config migrada para v%d (BT = saída principal)", APP_CFG_VER);
+    }
+    if (ver != APP_CFG_VER) {
+        appcfg_save();
+    }
+
     ESP_LOGI(TAG, "config: vol=%u%% local=%d bright=%u%% root=%s bt=%s calib=%d",
              s_cfg.volume, s_cfg.local_out, s_cfg.brightness, s_cfg.root_dir,
              s_cfg.has_bt ? s_cfg.bt_name : "-", s_cfg.has_calib);
@@ -86,6 +98,7 @@ esp_err_t appcfg_save(void)
         return err;
     }
 
+    nvs_set_u8(h, "ver", APP_CFG_VER);
     nvs_set_u8(h, "volume", s_cfg.volume);
     nvs_set_u8(h, "local", !!s_cfg.local_out);
     nvs_set_u8(h, "bright", s_cfg.brightness);

@@ -26,17 +26,31 @@
 
 #define LCD_H_RES           320
 #define LCD_V_RES           240
-#define LCD_PCLK_HZ         (40 * 1000 * 1000)
+/* 20 MHz: margem segura para o latch confiável dos comandos de init.
+ * (A 40 MHz algumas unidades apresentam falha intermitente em comandos
+ * de 1 parâmetro, ex.: MADCTL — sintoma: tela fica em retrato.) */
+#define LCD_PCLK_HZ         (20 * 1000 * 1000)
 
-/* MADCTL: paisagem 320x240 (rotação 1) + ordem de cor BGR.
- * Se a imagem aparecer de cabeça para baixo na sua unidade, troque por
- * 0xE8 (MX|MY|MV|BGR) e inverta TOUCH_MIRROR_X/TOUCH_MIRROR_Y. */
-#define LCD_MADCTL          0x28            /* MV | BGR */
+/* MADCTL: paisagem 320x240 + ordem de cor.
+ *   0x28 = MV|BGR  (padrão CYD: paisagem, USB à esquerda, cores BGR)
+ *   0xE8 = MX|MY|MV|BGR (paisagem girada 180°)
+ *   0x20 = MV|RGB (se vermelho/azul ficarem trocados, remova o bit BGR)
+ * Confira no log de boot: o driver relê o MADCTL gravado no painel. */
+#define LCD_MADCTL          0x28
+
+/* Inversão de cores do painel. ILI9341 do CYD: 0 (INVOFF).
+ * Se as cores parecerem "negativo fotográfico", mude para 1. */
+#define LCD_INVERT_COLORS   0
 
 /* Renderização parcial por tiras: 320 x 16 x RGB565 = 10240 bytes por buffer.
  * Dois buffers (ping-pong) = 20,5 KB de SRAM interna com capacidade DMA. */
 #define LCD_STRIP_LINES     16
 #define LCD_STRIP_BYTES     (LCD_H_RES * LCD_STRIP_LINES * 2)
+
+/* 0 = sem hardware de display (build para emulador/testes de lógica de UI) */
+#ifndef LCD_HW_PRESENT
+#define LCD_HW_PRESENT      1
+#endif
 
 /* ===================== Touch XPT2046 (SPI software) ======================= */
 #define TOUCH_PIN_CLK       GPIO_NUM_25
@@ -79,7 +93,13 @@
 
 /* ===================== Aplicação ========================================== */
 #define APP_BT_DEVICE_NAME  "CYD Audio Player"
-#define APP_VERSION         "1.0.0"
+#define APP_VERSION         "1.1.0"
+
+/* Compile com -DAPP_BT_ENABLE=0 para builds sem Bluetooth (ex.: emulador
+ * QEMU, que não possui rádio). Em hardware real, mantenha 1. */
+#ifndef APP_BT_ENABLE
+#define APP_BT_ENABLE       1
+#endif
 
 /* Prioridades de tarefas (ver especificação §2.2) */
 #define PRIO_AUDIO_PIPELINE 20

@@ -74,6 +74,11 @@ bool audio_pipeline_is_playing(void)
     return s_playing && !s_paused;
 }
 
+bool audio_pipeline_is_active(void)
+{
+    return s_playing;
+}
+
 uint32_t audio_pipeline_elapsed_s(void)
 {
     return s_elapsed_s;
@@ -228,6 +233,7 @@ static void pipeline_task(void *arg)
     uint32_t frames_since_prog = 0;
     uint8_t silence[256];
     memset(silence, 0x80, sizeof(silence));
+    bool dac_idle_silence = false;
 
     while (true) {
         /* ---- comandos ---- */
@@ -254,16 +260,24 @@ static void pipeline_task(void *arg)
 
         /* ---- geração de áudio ---- */
         if (!s_playing || s_paused) {
-            /* ocioso/pausado: mantém o DAC com nível médio (sem estalos) */
-            if (appcfg_get()->local_out && !bt_is_connected()) {
-                local_dac_write(silence, sizeof(silence), 10);
+            /* ocioso/pausado: empurra nível médio UMA vez no DAC (evita
+             * estalos sem manter escritas contínuas) */
+            if (appcfg_get()->local_out && !bt_is_connected() && !dac_idle_silence) {
+                local_dac_write(silence, sizeof(silence), 100);
+                dac_idle_silence = true;
             }
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
+        dac_idle_silence = false;
 
         audio_route_t route = current_route();
         set_route(route);
+        if (route == ROUTE_NONE) {
+            /* nenhuma saída ativa: NÃO consome a faixa, apenas espera */
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
 
         int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, s_volume);
         if (frames <= 0) {
@@ -283,17 +297,13 @@ static void pipeline_task(void *arg)
                 /* ring cheio e stream parado: descarta para não travar */
                 ESP_LOGD(TAG, "ring cheio — bloco descartado");
             }
-        } else if (route == ROUTE_LOCAL) {
+        } else {
             /* downmix estéreo 16 bits -> mono 8 bits para o DAC */
             for (int i = 0; i < frames; i++) {
                 int32_t m = ((int32_t)pcm[i * 2] + (int32_t)pcm[i * 2 + 1]) / 2;
                 mono8[i] = (uint8_t)((m >> 8) + 128);
             }
             local_dac_write(mono8, frames, 500);
-        } else {
-            /* nenhuma rota: aguarda sem consumir a faixa */
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
         }
 
         /* ---- progresso (1 evento/s) ---- */
@@ -324,6 +334,10 @@ esp_err_t audio_pipeline_init(void)
     esp_err_t err = local_dac_init();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "DAC local indisponível (%s) — só Bluetooth", esp_err_to_name(err));
+    } else {
+        /* Bluetooth é a saída principal: o DAC só fica ativo se o usuário
+         * habilitou o alto-falante on-board nos Ajustes. */
+        local_dac_enable(appcfg_get()->local_out);
     }
 
     BaseType_t ok = xTaskCreatePinnedToCore(pipeline_task, "audio_pipe", 4096,

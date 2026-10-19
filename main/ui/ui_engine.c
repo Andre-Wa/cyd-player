@@ -56,8 +56,7 @@ static volatile uint32_t s_dirty;         /* bitmask de tiras sujas */
 static QueueHandle_t s_touch_q;
 static QueueHandle_t s_ctrl_q;
 static screen_id_t s_cur = SCREEN_SPLASH;
-static screen_id_t s_next = SCREEN_SPLASH;
-static volatile bool s_switch_req;
+
 
 typedef struct { screen_id_t id; } ctrl_msg_t;
 
@@ -98,16 +97,17 @@ static void render_strips(uint32_t mask)
         int y = n * LCD_STRIP_LINES;
         int h = LCD_V_RES - y < LCD_STRIP_LINES ? LCD_V_RES - y : LCD_STRIP_LINES;
 
-        /* espera liberar o buffer que será reutilizado (2 em voo no máx.) */
-        if (pending >= 2) {
-            lcd_wait_one();
-            pending--;
-        }
-
+        /* renderiza a tira n ENQUANTO o DMA da tira n-1 ainda está em voo
+         * (buffer n&1 foi liberado: o flush de n-1 só é emitido após a
+         * conclusão de n-2) */
         gfx_canvas_t cv;
         gfx_canvas_init(&cv, s_buf[n & 1], LCD_H_RES, h, 0, y);
         scr->draw(&cv);
 
+        if (pending) {
+            lcd_wait_one();
+            pending--;
+        }
         lcd_flush_async(0, y, LCD_H_RES, h, s_buf[n & 1]);
         pending++;
     }
@@ -205,6 +205,7 @@ static void ui_render_task(void *arg)
                 if (s_screens[s_cur] && s_screens[s_cur]->on_enter) {
                     s_screens[s_cur]->on_enter();
                 }
+                ESP_LOGI(TAG, "tela -> %s", s_screens[s_cur]->name);
                 ui_invalidate_all();
             }
         }

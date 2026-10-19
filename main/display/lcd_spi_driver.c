@@ -42,6 +42,7 @@ typedef struct {
     uint16_t delay_ms;
 } lcd_init_cmd_t;
 
+#if LCD_HW_PRESENT
 static const lcd_init_cmd_t s_init_cmds[] = {
     {0xCF, {0x00, 0xAA, 0xE0}, 3, 0},
     {0xED, {0x67, 0x03, 0x12, 0x81}, 4, 0},
@@ -64,6 +65,8 @@ static const lcd_init_cmd_t s_init_cmds[] = {
     {0xB6, {0x08, 0x82, 0x27}, 3, 0},      /* Display function */
 };
 
+#endif /* LCD_HW_PRESENT (init cmds) */
+
 /* -------- callback de conclusão de transmissão de cor -------- */
 static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
         esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
@@ -74,6 +77,27 @@ static bool IRAM_ATTR on_color_trans_done(esp_lcd_panel_io_handle_t io,
     }
     return hp_woken == pdTRUE;
 }
+
+#if LCD_HW_PRESENT
+/* Parâmetros estáticos (evita literais compostos em tx_param) */
+static const uint8_t s_madctl_val[] = { LCD_MADCTL };
+static const uint8_t s_colmod_565[] = { 0x55 };
+
+/* Diagnóstico: relê o ID do controlador e o MADCTL efetivamente gravado.
+ * O ILI9341 devolve 1 byte "dummy" antes dos dados — por isso lemos a mais
+ * e registramos tudo em hex no log. */
+static void lcd_readback_diag(void)
+{
+    uint8_t id[4] = {0};
+    uint8_t mad[3] = {0};
+    esp_err_t e1 = esp_lcd_panel_io_rx_param(s_io, 0x04 /* RDDID */, id, sizeof(id));
+    esp_err_t e2 = esp_lcd_panel_io_rx_param(s_io, 0x0B /* RDDMADCTL */, mad, sizeof(mad));
+    ESP_LOGI(TAG, "DIAG RDDID(%s): %02X %02X %02X %02X (ILI9341 espera ~00 93 41)",
+             esp_err_to_name(e1), id[0], id[1], id[2], id[3]);
+    ESP_LOGI(TAG, "DIAG RDDMADCTL(%s): %02X %02X %02X (esperado 0x%02X)",
+             esp_err_to_name(e2), mad[0], mad[1], mad[2], LCD_MADCTL);
+}
+#endif /* LCD_HW_PRESENT */
 
 /* -------- backlight (LEDC PWM, GPIO21) -------- */
 static void backlight_init(void)
@@ -106,6 +130,10 @@ void lcd_set_backlight(uint8_t pct)
 
 esp_err_t lcd_init(void)
 {
+#if !LCD_HW_PRESENT
+    ESP_LOGW(TAG, "LCD_HW_PRESENT=0 — modo emulação, display desativado");
+    return ESP_OK;
+#else
     s_flush_sem = xSemaphoreCreateCounting(8, 0);
     if (!s_flush_sem) {
         return ESP_ERR_NO_MEM;
@@ -146,14 +174,24 @@ esp_err_t lcd_init(void)
             vTaskDelay(pdMS_TO_TICKS(s_init_cmds[i].delay_ms));
         }
     }
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, (uint8_t[]){LCD_MADCTL}, 1);
-    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_COLMOD, (uint8_t[]){0x55}, 1); /* RGB565 */
-    /* Os painéis ILI9341 do CYD ficam corretos com inversão ligada */
+    /* Pixel format 16 bits + orientação paisagem (MADCTL enviado 2x: em
+     * algumas unidades o primeiro envio pós-reset não é latchado) */
+    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_COLMOD, s_colmod_565, 1);
+    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
+#if LCD_INVERT_COLORS
     esp_lcd_panel_io_tx_param(s_io, LCD_CMD_INVON, NULL, 0);
+#else
+    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_INVOFF, NULL, 0);
+#endif
     esp_lcd_panel_io_tx_param(s_io, LCD_CMD_SLPOUT, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(120));
+    esp_lcd_panel_io_tx_param(s_io, LCD_CMD_MADCTL, s_madctl_val, 1);
     esp_lcd_panel_io_tx_param(s_io, LCD_CMD_DISPON, NULL, 0);
     vTaskDelay(pdMS_TO_TICKS(20));
+
+    lcd_readback_diag();
 
     backlight_init();
     lcd_set_backlight(appcfg_get()->brightness);
@@ -161,10 +199,15 @@ esp_err_t lcd_init(void)
     ESP_LOGI(TAG, "ILI9341 320x240 inicializado (SPI2 @ %d MHz, DMA)",
              LCD_PCLK_HZ / 1000000);
     return ESP_OK;
+#endif /* LCD_HW_PRESENT */
 }
 
 esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf)
 {
+#if !LCD_HW_PRESENT
+    (void)x; (void)y; (void)w; (void)h; (void)buf;
+    return ESP_OK;
+#else
     if (!s_io) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -185,12 +228,22 @@ esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf)
         s_pending--;
     }
     return err;
+#endif /* LCD_HW_PRESENT */
 }
 
 void lcd_wait_one(void)
 {
     if (s_pending > 0 && s_flush_sem) {
-        xSemaphoreTake(s_flush_sem, portMAX_DELAY);
+        /* Timeout de segurança: se o callback de DMA nunca chegar (falha do
+         * peripheral/emulador), seguimos em frente em vez de travar a UI.
+         * Em hardware real a conclusão leva < 5 ms por tira. */
+        if (xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                ESP_LOGW(TAG, "flush LCD não concluído (timeout) — seguindo");
+            }
+        }
         s_pending--;
     }
 }

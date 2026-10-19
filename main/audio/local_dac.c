@@ -16,7 +16,10 @@ esp_err_t local_dac_init(void)
         .buf_size   = 512,
         .freq_hz    = AUDIO_SAMPLE_RATE,         /* 44,1 kHz */
         .offset     = 0,
-        .clk_src    = DAC_DIGI_CLK_SRC_APLL,     /* APLL: taxa exata */
+        /* PLL_D2 com divisor fracionário: erro < 0,1 % em 44,1 kHz, mais que
+         * suficiente para a saída local (a rota BT é cadenciada pelo sink).
+         * Evita a dependência da APLL. */
+        .clk_src    = DAC_DIGI_CLK_SRC_DEFAULT,
         .chan_mode  = DAC_CHANNEL_MODE_SIMUL,
     };
     esp_err_t err = dac_continuous_new_channels(&cfg, &s_dac);

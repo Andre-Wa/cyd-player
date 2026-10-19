@@ -38,6 +38,9 @@ static void draw_status_line(gfx_canvas_t *c)
         if (g_ui.pstate == PST_PAUSED) {
             snprintf(s, sizeof(s), "> Pausado");
             col = COL_ACCENT;
+        } else if (appcfg_get()->local_out) {
+            snprintf(s, sizeof(s), "> Pronto (alto-falante local)");
+            col = COL_MUTED;
         } else {
             snprintf(s, sizeof(s), "> Sem saida (conecte o Bluetooth)");
         }

@@ -1,7 +1,10 @@
-.vscode
-cache
+.vscode/
+.cache/
+cache/
 build
-.test
+.test/
 .clangd
 sdkconfig
 sdkconfig.old
+managed_components/
+dependencies.lock

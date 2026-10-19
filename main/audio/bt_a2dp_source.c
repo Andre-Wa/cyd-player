@@ -13,10 +13,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include "app_config.h"
+#if APP_BT_ENABLE
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/ringbuf.h"
+#include "freertos/timers.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
@@ -27,7 +30,6 @@
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
 
-#include "app_config.h"
 #include "app_types.h"
 #include "bt_a2dp_source.h"
 #include "audio_pipeline.h"
@@ -61,9 +63,24 @@ typedef struct {
 static QueueHandle_t s_work_q;
 static volatile bt_state_t s_state = BT_OFF;
 static volatile bool s_connected;
+static volatile bool s_stream_started;
+static TimerHandle_t s_media_tmr;
+static int s_media_retries;
 static char s_peer_name[32];
 static uint8_t s_peer_mac[6];
 static esp_avrc_rn_evt_cap_mask_t s_peer_rn_cap;
+
+/* Alguns sinks não aceitam o primeiro AVDTP START logo após a conexão;
+ * este timer repete o START a cada 2 s até o stream subir (máx. 5x). */
+static void media_retry_cb(TimerHandle_t t)
+{
+    if (s_connected && !s_stream_started && s_media_retries < 5) {
+        s_media_retries++;
+        ESP_LOGW(TAG, "stream A2DP ainda não iniciou — START novamente (%d/5)",
+                 s_media_retries);
+        esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_START);
+    }
+}
 
 #define TL_GET_CAPS   0
 #define TL_RN_VOLUME  1
@@ -371,6 +388,15 @@ static void bt_work_task(void *arg)
                 mac2str(w.mac, s_peer_name);
             }
             audio_pipeline_notify_bt_stream(false);   /* aguarda AUDIO_STARTED */
+            s_stream_started = false;
+            s_media_retries = 0;
+            if (!s_media_tmr) {
+                s_media_tmr = xTimerCreate("a2dp_start", pdMS_TO_TICKS(2000),
+                                           pdTRUE, NULL, media_retry_cb);
+            }
+            if (s_media_tmr) {
+                xTimerStart(s_media_tmr, 0);
+            }
             set_state(BT_CONNECTED);
             post_ui(EVT_BT_STATE, BT_CONNECTED, s_peer_name, s_peer_mac);
             ESP_LOGI(TAG, "A2DP conectado a %s", s_peer_name);
@@ -388,12 +414,20 @@ static void bt_work_task(void *arg)
         }
         case SIG_A2DP_DISCONNECTED:
             s_connected = false;
+            s_stream_started = false;
+            if (s_media_tmr) {
+                xTimerStop(s_media_tmr, 0);
+            }
             audio_pipeline_notify_bt_stream(false);
             set_state(BT_READY);
             post_ui(EVT_BT_STATE, BT_READY, NULL, NULL);
             ESP_LOGI(TAG, "A2DP desconectado");
             break;
         case SIG_AUDIO_STARTED:
+            s_stream_started = true;
+            if (s_media_tmr) {
+                xTimerStop(s_media_tmr, 0);
+            }
             audio_pipeline_notify_bt_stream(true);
             ESP_LOGI(TAG, "stream A2DP iniciado (SBC)");
             break;
@@ -554,7 +588,7 @@ esp_err_t bt_audio_init(void)
     }
 
     /* GAP (descoberta/pareamento) */
-    esp_bt_dev_set_device_name(APP_BT_DEVICE_NAME);
+    esp_bt_gap_set_device_name(APP_BT_DEVICE_NAME);
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     esp_bt_gap_register_callback(gap_cb);
 
@@ -586,3 +620,32 @@ fail:
     post_ui(EVT_ERROR, 0, "Bluetooth indisponivel", NULL);
     return err;
 }
+
+#else  /* =================== build sem Bluetooth (APP_BT_ENABLE=0) ========== */
+
+#include "esp_log.h"
+#include "app_types.h"
+#include "bt_a2dp_source.h"
+
+static const char *TAG = "bt_src";
+
+esp_err_t bt_audio_init(void)
+{
+    ESP_LOGW(TAG, "build sem Bluetooth (APP_BT_ENABLE=0)");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+bool bt_is_connected(void) { return false; }
+bt_state_t bt_get_state(void) { return BT_OFF; }
+void bt_get_peer(char *name, int name_len, uint8_t mac[6])
+{
+    if (name && name_len) { name[0] = '\0'; }
+    if (mac) { memset(mac, 0, 6); }
+}
+void bt_start_discovery(void) {}
+void bt_stop_discovery(void) {}
+void bt_connect(const uint8_t mac[6]) { (void)mac; }
+void bt_disconnect(void) {}
+void bt_avrcp_set_volume(uint8_t vol100) { (void)vol100; }
+void bt_avrcp_passthrough(uint8_t cmd, bool pressed) { (void)cmd; (void)pressed; }
+
+#endif /* APP_BT_ENABLE */

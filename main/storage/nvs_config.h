@@ -35,6 +35,10 @@ typedef struct {
     float    calib[6];
 } app_config_t;
 
+/* Versão do esquema de configuração (migração automática na NVS).
+ *  v2: Bluetooth virou a saída principal — local_out passa a 0 por padrão. */
+#define APP_CFG_VER 2
+
 /* Carrega a configuração da NVS (valores padrão se ausente). */
 esp_err_t appcfg_load(void);
 

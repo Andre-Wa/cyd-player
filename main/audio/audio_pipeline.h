@@ -30,6 +30,7 @@ void audio_pipeline_set_volume(uint8_t vol);   /* 0..100 */
 
 /* Consulta (voláteis, leitura direta). */
 bool audio_pipeline_is_playing(void);
+bool audio_pipeline_is_active(void);   /* faixa carregada (tocando ou pausada) */
 uint32_t audio_pipeline_elapsed_s(void);
 uint32_t audio_pipeline_total_s(void);
 
