@@ -244,3 +244,17 @@ UX proposta e plano em fases: [`docs/transferencia_arquivos.md`](docs/transferen
   flush), escolhidos no quiz do primeiro boot e persistidos na NVS.
 - A fonte 8×16 é gerada por `tools/gen_font.py` (Pillow + DejaVu Sans Mono
   Bold); títulos usam escala 2× (dobrada em pixels).
+
+---
+
+## 12. Validado em hardware (unidade real)
+
+- **Placa:** CYD ESP32-2432S028R (clone ILI9341, scan paisagem MV=0, RGB) —
+  modo de orientação **2** (`MADCTL 0x40`); touch XPT2046 calibrado (afim NVS).
+- **Fone:** QCY H3S — A2DP Source + SBC, AVRCP CT/TG (volume absoluto nos dois
+  sentidos, passthrough play/pause/stop/next/prev do fone), reconexão
+  automática com retry (3×, 6 s).
+- **Áudio:** WAV 44,1 kHz e 48 kHz estéreo (reamostragem), arquivo de 40 MB,
+  auto-avanço entre faixas; heap pós-boot com BT ≈ 66 KB; pico de pilha do
+  pipeline ≈ 2,6 KB (HWM 5608 B com stack 8192).
+- **SD:** SDSC 2 GB FAT32; debounce de touch ativo em uso normal.

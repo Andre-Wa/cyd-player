@@ -93,7 +93,7 @@
 
 /* ===================== Aplicação ========================================== */
 #define APP_BT_DEVICE_NAME  "CYD Audio Player"
-#define APP_VERSION         "1.3.3"
+#define APP_VERSION         "1.3.4"
 
 /* RODADA DE TESTES (debug): força o fluxo seta de orientação + calibração
  * de touch em TODO boot, independente de orient_ok/has_calib. */

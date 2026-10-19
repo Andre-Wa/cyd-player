@@ -78,7 +78,9 @@ static int  s_cur_index = -1;
 static bool s_cfg_save_pending;
 static int64_t s_cfg_last_change_ms;
 static bool s_boot_ui_done;
-static bool s_autoreconnect_done;
+static int  s_recon_tries;
+static int64_t s_recon_last_ms;
+static bool s_user_disconnected;
 
 static void post_evt(evt_id_t id, int32_t val, const char *str)
 {
@@ -250,9 +252,12 @@ static void handle_cmd(const app_cmd_t *c)
         }
         break;
     case CMD_BT_CONNECT:
+        s_user_disconnected = false;
+        s_recon_tries = 0;
         bt_connect(c->mac);
         break;
     case CMD_BT_DISCONNECT:
+        s_user_disconnected = true;
         bt_disconnect();
         break;
     default:
@@ -288,18 +293,27 @@ static void app_ctrl_task(void *arg)
         default:            led_set(false, false, false); break;
         }
 
-        if (!s_autoreconnect_done && bst == BT_READY && now - boot_ms > 4000) {
-            s_autoreconnect_done = true;
-            app_config_t *cfg = appcfg_get();
-            if (cfg->has_bt) {
-                ESP_LOGI(TAG, "reconectando ao último dispositivo: %s", cfg->bt_name);
+        /* Reconexão automática com retry: alguns fones/caixas recusam a
+         * primeira página logo após o boot (status 2/3). Até 3 tentativas
+         * com 6 s de intervalo; desconexão manual cancela o ciclo. */
+        app_config_t *cfg = appcfg_get();
+        if (cfg->has_bt && !s_user_disconnected) {
+            if (bt_is_connected()) {
+                s_recon_tries = 0;
+            } else if (bst == BT_READY && s_recon_tries < 3 &&
+                       now - boot_ms > 4000 && now - s_recon_last_ms > 6000) {
+                s_recon_last_ms = now;
+                s_recon_tries++;
+                ESP_LOGI(TAG, "reconectando ao último dispositivo (%d/3): %s",
+                         s_recon_tries, cfg->bt_name);
                 bt_connect(cfg->bt_mac);
-            } else {
-                /* Bluetooth é a saída principal: já inicia a varredura para
-                 * deixar a lista de dispositivos pronta na tela BT. */
-                ESP_LOGI(TAG, "nenhum dispositivo salvo — iniciando varredura BT");
-                bt_start_discovery();
             }
+        } else if (!cfg->has_bt && !s_boot_ui_done && bst == BT_READY &&
+                   now - boot_ms > 4000) {
+            /* Bluetooth é a saída principal: varredura já deixa a lista
+             * de dispositivos pronta na tela BT. */
+            ESP_LOGI(TAG, "nenhum dispositivo salvo — iniciando varredura BT");
+            bt_start_discovery();
         }
 
         if (!s_boot_ui_done && now - boot_ms > 2500) {
