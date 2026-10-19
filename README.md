@@ -22,6 +22,7 @@ operação **sem PSRAM**.
 | 🔊 Bluetooth A2DP **Source** | **Saída principal**: o CYD **transmite** áudio (SBC 44,1 kHz) para caixas/fones BT, com retry automático do START do stream |
 | 🔍 Pareamento pela tela | Varredura GAP (**iniciada automaticamente no boot** se não houver dispositivo salvo), lista com RSSI, conexão com 1 toque, reconexão automática do último dispositivo |
 | 🎚 Volume absoluto (AVRCP) | O volume do app controla o do alto-falante — e vice-versa (sincronizado) |
+| 🔀 Volume por rota | `vol_bt` e `vol_local` independentes na NVS: ao trocar BT↔alto-falante, salva o volume da rota antiga e carrega o da nova (slider e teclas do fone ajustam a rota ativa). A rota local aplica taper quadrático (10%→~1%, 50%→25%) porque o SC8002D+DAC 8 bits tem ganho muito alto |
 | 🎧 Botões do fone (AVRCP Target) | Play/pause/stop/next/prev do fone controlam o player; vol± do fone sincroniza o volume do app |
 | 📁 Navegador de arquivos | Pastas + arquivos `.wav` do SD, rolagem por arrasto |
 | 🔉 Alto-falante local | DAC 8 bits (GPIO26 → SC8002D) — **desligado por padrão** (v1.1: BT é a saída principal); ativável em *Ajustes* |

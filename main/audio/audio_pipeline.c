@@ -81,6 +81,11 @@ bool audio_pipeline_is_active(void)
     return s_playing;
 }
 
+audio_route_t audio_pipeline_get_route(void)
+{
+    return s_route;
+}
+
 uint32_t audio_pipeline_elapsed_s(void)
 {
     return s_elapsed_s;
@@ -164,13 +169,33 @@ static audio_route_t current_route(void)
 
 static void set_route(audio_route_t r)
 {
-    if (r != s_route) {
-        s_route = r;
-        post_evt(EVT_ROUTE, r, NULL);
-        ESP_LOGI(TAG, "rota de áudio: %s",
-                 r == ROUTE_BT ? "Bluetooth A2DP" :
-                 r == ROUTE_LOCAL ? "alto-falante local" : "nenhuma");
+    if (r == s_route) {
+        return;
     }
+    app_config_t *cfg = appcfg_get();
+
+    /* memória de volume por rota: salva a ativa, carrega a da nova rota */
+    if (s_route == ROUTE_BT) {
+        cfg->vol_bt = cfg->volume;
+    } else if (s_route == ROUTE_LOCAL) {
+        cfg->vol_local = cfg->volume;
+    }
+    if (r == ROUTE_BT) {
+        cfg->volume = cfg->vol_bt;
+        bt_avrcp_set_volume(cfg->volume);   /* sincroniza o fone/caixa */
+    } else if (r == ROUTE_LOCAL) {
+        cfg->volume = cfg->vol_local;
+    }
+    s_volume = cfg->volume;
+    appcfg_save();
+    post_evt(EVT_VOLUME, cfg->volume, NULL);
+
+    s_route = r;
+    post_evt(EVT_ROUTE, r, NULL);
+    ESP_LOGI(TAG, "rota de áudio: %s (volume %u%%)",
+             r == ROUTE_BT ? "Bluetooth A2DP" :
+             r == ROUTE_LOCAL ? "alto-falante local" : "nenhuma",
+             cfg->volume);
 }
 
 /* Abre arquivo e publica eventos de início de faixa */
@@ -287,7 +312,13 @@ static void pipeline_task(void *arg)
             continue;
         }
 
-        int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, s_volume);
+        /* rota local: taper quadrático (amp SC8002D + DAC 8 bits têm ganho
+         * alto e poucos passos úteis no começo do slider) */
+        int vol = s_volume;
+        if (route == ROUTE_LOCAL && vol > 0) {
+            vol = (vol * vol + 99) / 100;
+        }
+        int frames = wav_read_stereo(&s_dec, pcm, PCM_BLOCK_FRAMES, vol);
         if (frames <= 0) {
             /* fim da faixa */
             ESP_LOGI(TAG, "fim de %s", s_cur_path);

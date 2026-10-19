@@ -227,6 +227,12 @@ static void handle_cmd(const app_cmd_t *c)
         break;
     case CMD_SET_VOLUME:
         cfg->volume = (uint8_t)(c->val < 0 ? 0 : (c->val > 100 ? 100 : c->val));
+        /* o slider/teclas do fone ajustam a memória da rota ATIVA */
+        if (audio_pipeline_get_route() == ROUTE_BT) {
+            cfg->vol_bt = cfg->volume;
+        } else if (audio_pipeline_get_route() == ROUTE_LOCAL) {
+            cfg->vol_local = cfg->volume;
+        }
         audio_pipeline_set_volume(cfg->volume);
         bt_avrcp_set_volume(cfg->volume);
         request_cfg_save();

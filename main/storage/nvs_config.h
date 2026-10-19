@@ -16,7 +16,9 @@
 
 typedef struct {
     /* áudio */
-    uint8_t  volume;             /* 0..100 */
+    uint8_t  volume;             /* volume ATIVO (da rota atual), 0..100 */
+    uint8_t  vol_bt;             /* memória de volume da rota Bluetooth */
+    uint8_t  vol_local;          /* memória de volume do alto-falante local */
     uint8_t  local_out;          /* 1 = alto-falante on-board ativo sem BT */
     uint8_t  brightness;         /* backlight 0..100 */
     uint8_t  auto_next;          /* avançar automaticamente no fim da faixa */

@@ -20,6 +20,8 @@ static void config_defaults(void)
 {
     memset(&s_cfg, 0, sizeof(s_cfg));
     s_cfg.volume     = 65;
+    s_cfg.vol_bt     = 65;
+    s_cfg.vol_local  = 10;   /* amp SC8002D tem ganho alto; começa contido */
     s_cfg.local_out  = 0;    /* v1.1: Bluetooth é a saída principal */
     s_cfg.brightness = 90;
     s_cfg.auto_next  = 1;
@@ -48,6 +50,17 @@ esp_err_t appcfg_load(void)
     uint8_t ver = 0;
     nvs_get_u8(h, "ver", &ver);
     if (nvs_get_u8(h, "volume", &u8) == ESP_OK)     s_cfg.volume = u8 > 100 ? 100 : u8;
+    bool have_vols = true;
+    if (nvs_get_u8(h, "volbt", &u8) == ESP_OK)      s_cfg.vol_bt = u8 > 100 ? 100 : u8;
+    else                                            have_vols = false;
+    if (nvs_get_u8(h, "volloc", &u8) == ESP_OK)     s_cfg.vol_local = u8 > 100 ? 100 : u8;
+    else                                            have_vols = false;
+    if (!have_vols) {   /* migração: volume antigo era o da rota BT */
+        s_cfg.vol_bt = s_cfg.volume;
+        if (s_cfg.vol_local > 10) {
+            s_cfg.vol_local = 10;
+        }
+    }
     if (nvs_get_u8(h, "local", &u8) == ESP_OK)      s_cfg.local_out = !!u8;
     if (nvs_get_u8(h, "bright", &u8) == ESP_OK)     s_cfg.brightness = u8 > 100 ? 100 : u8;
     if (nvs_get_u8(h, "autonext", &u8) == ESP_OK)   s_cfg.auto_next = !!u8;
@@ -109,6 +122,8 @@ esp_err_t appcfg_save(void)
 
     nvs_set_u8(h, "ver", APP_CFG_VER);
     nvs_set_u8(h, "volume", s_cfg.volume);
+    nvs_set_u8(h, "volbt", s_cfg.vol_bt);
+    nvs_set_u8(h, "volloc", s_cfg.vol_local);
     nvs_set_u8(h, "local", !!s_cfg.local_out);
     nvs_set_u8(h, "bright", s_cfg.brightness);
     nvs_set_u8(h, "autonext", !!s_cfg.auto_next);
