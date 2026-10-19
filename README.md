@@ -46,21 +46,16 @@ comunidade CYD):
 
 Tudo definido em [`main/app_config.h`](main/app_config.h).
 
-> **Orientação e cores da tela** (ajustes finos em `main/app_config.h`):
-> - `LCD_MADCTL 0x28` — paisagem 320×240, ordem BGR (padrão CYD).
->   Use `0xE8` se a imagem ficar de cabeça para baixo; remova o bit BGR
->   (`0x20`) se vermelho/azul estiverem trocados.
-> - `LCD_INVERT_COLORS 0` — se as cores parecerem "negativo fotográfico",
->   mude para `1`.
-> - **v1.2:** a inicialização/registros usam CS e DC controlados por GPIO
->   (modelo TFT_eSPI/Adafruit), porque em algumas unidades o caminho
->   `esp_lcd panel_io` não latchava comandos *com parâmetro* (MADCTL) —
->   sintoma: conteúdo paisagem aparecendo girado/retrato e memória do
->   painel parcialmente não sobrescrita.
-> - No boot o driver **verifica por readback** e loga:
->   `MADCTL 28 confirmado por readback` (ou `NÃO latchou`, com retry 3×),
->   além de `DIAG RDDID/RDDMADCTL/RDCOLMOD`. Esses logs identificam o
->   controlador e o estado real do painel — envie-os em caso de problema.
+> **Orientação e cores da tela** (v1.3.1, `main/app_config.h` e NVS):
+> - Clones do CYD variam em polaridade do bit **MV** (scan nativo paisagem ou
+>   retrato), ordem de cor **BGR/RGB** e espelhos **MX/MY** — e alguns não
+>   trazem o SDO conectado (readback inútil). Por isso a orientação é um
+>   **modo (0–13)** escolhido no quiz do primeiro boot: tabela `s_modes`
+>   em `display/lcd_spi_driver.c` (MADCTL diretos + 4 transposições por
+>   software para painéis com scan fixo retrato).
+> - Quiz: **toque/arraste** cicla o modo; **segurar 2 s** confirma e abre a
+>   calibração de touch. Depois: *Ajustes → “Tela: modo N”*.
+> - O modo escolhido e a calibração ficam na NVS (`xform`, `calib`).
 
 ## 3. Arquitetura (conforme especificação)
 
@@ -227,12 +222,12 @@ Logs de diagnóstico saem pela serial (115200). O heap livre aparece em
 - `APP_BT_ENABLE=0` e `LCD_HW_PRESENT=0` em `app_config.h` geram um build
   sem rádio/display — útil para testes de lógica no QEMU
   (`qemu-system-xtensa -machine esp32`).
-- **v1.2 (display):** após uma unidade real reportar que comandos com
-  parâmetro não latchavam via `esp_lcd panel_io` (MADCTL ignorado → tela
-  em retrato + resíduo de conteúdo anterior), o driver passou a escrever
-  registros com CS/DC por GPIO e polling (sequência clássica ILI9341), com
-  verificação por readback e retry. O flush de pixels é polling em chunks
-  de 2 KB (CPU ~2 ms/tira a 40 MHz) — o pipeline de tiras sujas mantém a UI
-  fluida mesmo sem DMA.
+- **v1.2/v1.3 (display):** após unidades reais mostrarem que (a) o caminho
+  `esp_lcd panel_io` e mesmo CS/DC manuais não resolviam em clones que
+  ignoram/invertem o bit MV, e (b) alguns clones não têm SDO (readback
+  inútil), o driver passou a: escrever registros com CS/DC por GPIO
+  (sequência clássica ILI9341), tratar readback como informativo e oferecer
+  **14 modos de orientação** (MADCTL diretos + transposição por software no
+  flush), escolhidos no quiz do primeiro boot e persistidos na NVS.
 - A fonte 8×16 é gerada por `tools/gen_font.py` (Pillow + DejaVu Sans Mono
   Bold); títulos usam escala 2× (dobrada em pixels).

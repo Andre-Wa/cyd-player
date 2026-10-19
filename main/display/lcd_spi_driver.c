@@ -129,16 +129,33 @@ void lcd_set_backlight(uint8_t pct)
 
 /* ---------- verificação por readback ---------- */
 
-/* MADCTL adequado a cada modo de orientação */
+/* Tabela de modos de orientação. Clones do CYD variam em: polaridade do
+ * bit MV (scan nativo paisagem ou retrato), ordem de cor (BGR/RGB) e
+ * espelhos MX/MY. O quiz do primeiro boot cicla esta tabela. */
+typedef struct { uint8_t madctl; uint8_t transp; } lcd_mode_t;
+static const lcd_mode_t s_modes[] = {
+    /* diretos (sem transposição) */
+    { 0x28, 0 },  /* 0: CYD padrão ILI9341 (MV|BGR)            */
+    { 0x00, 0 },  /* 1: clone paisagem-nativo, RGB             */
+    { 0x40, 0 },  /* 2: clone paisagem-nativo, RGB, MX         */
+    { 0x80, 0 },  /* 3: clone paisagem-nativo, RGB, MY         */
+    { 0xC0, 0 },  /* 4: clone paisagem-nativo, RGB, MX|MY      */
+    { 0x08, 0 },  /* 5: clone paisagem-nativo, BGR             */
+    { 0x48, 0 },  /* 6: clone paisagem-nativo, BGR, MX         */
+    { 0x88, 0 },  /* 7: clone paisagem-nativo, BGR, MY         */
+    { 0xC8, 0 },  /* 8: clone paisagem-nativo, BGR, MX|MY      */
+    { 0xE8, 0 },  /* 9: CYD padrão girado 180°                 */
+    /* transpostos (painéis com scan fixo retrato) */
+    { 0x08, 2 },  /* 10 */
+    { 0x08, 3 },  /* 11 */
+    { 0x08, 4 },  /* 12 */
+    { 0x08, 5 },  /* 13 */
+};
+#define LCD_MODE_COUNT ((uint8_t)(sizeof(s_modes) / sizeof(s_modes[0])))
+
 static uint8_t madctl_for_xform(uint8_t xf)
 {
-    if (xf == 0) {
-        return LCD_MADCTL;                     /* paisagem (MV|BGR) */
-    }
-    if (xf == 1) {
-        return (uint8_t)(LCD_MADCTL ^ 0xC0);   /* paisagem 180° */
-    }
-    return (uint8_t)(LCD_MADCTL & 0x08);       /* retrato nativo + transposição */
+    return s_modes[xf % LCD_MODE_COUNT].madctl;
 }
 
 static void apply_madctl(void)
@@ -151,7 +168,7 @@ static void apply_madctl(void)
 
 void lcd_set_xform(uint8_t xf)
 {
-    appcfg_get()->lcd_xform = xf > 5 ? 0 : xf;
+    appcfg_get()->lcd_xform = (uint8_t)(xf % LCD_MODE_COUNT);
     apply_madctl();
 }
 
@@ -307,9 +324,9 @@ esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf)
     if (!s_dev) {
         return ESP_ERR_INVALID_STATE;
     }
-    uint8_t t = appcfg_get()->lcd_xform;
-    if (t >= 2 && x == 0 && w == LCD_H_RES) {
-        return flush_transposed(y, h, buf, t);
+    const lcd_mode_t *mode = &s_modes[appcfg_get()->lcd_xform % LCD_MODE_COUNT];
+    if (mode->transp && x == 0 && w == LCD_H_RES) {
+        return flush_transposed(y, h, buf, mode->transp);
     }
     const uint8_t ca[4] = { (uint8_t)(x >> 8), (uint8_t)(x & 0xFF),
                             (uint8_t)((x + w - 1) >> 8), (uint8_t)((x + w - 1) & 0xFF) };

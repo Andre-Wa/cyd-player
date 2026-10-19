@@ -54,7 +54,7 @@ esp_err_t appcfg_load(void)
     if (nvs_get_u8(h, "lastidx", &u8) == ESP_OK)    s_cfg.last_index = u8;
     if (nvs_get_u8(h, "orientok", &u8) == ESP_OK)   s_cfg.orient_ok = !!u8;
     if (nvs_get_u8(h, "xform", &u8) == ESP_OK) {
-        s_cfg.lcd_xform = u8 > 5 ? 0 : u8;
+        s_cfg.lcd_xform = u8 > LCD_MODE_MAX ? 0 : u8;
     } else {
         uint8_t r180 = 0;   /* migração da v1.2.2 */
         if (nvs_get_u8(h, "rot180", &r180) == ESP_OK && r180) {

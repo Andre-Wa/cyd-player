@@ -122,7 +122,7 @@ static void settings_touch(const touch_evt_t *ev)
         appcfg_save();
         ui_invalidate_all();
     } else if (gfx_in_rect(x, y, 212, 158, 100, 26)) {
-        cfg->lcd_xform = (cfg->lcd_xform + 1) % 6;
+        cfg->lcd_xform = (cfg->lcd_xform + 1) % (LCD_MODE_MAX + 1);
         lcd_set_xform(cfg->lcd_xform);
         cfg->has_calib = 0;      /* touch precisa recalibrar p/ nova orientação */
         appcfg_save();

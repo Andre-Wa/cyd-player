@@ -93,7 +93,7 @@
 
 /* ===================== Aplicação ========================================== */
 #define APP_BT_DEVICE_NAME  "CYD Audio Player"
-#define APP_VERSION         "1.3.0"
+#define APP_VERSION         "1.3.1"
 
 /* Compile com -DAPP_BT_ENABLE=0 para builds sem Bluetooth (ex.: emulador
  * QEMU, que não possui rádio). Em hardware real, mantenha 1. */

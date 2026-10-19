@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "lcd_spi_driver.h"   /* LCD_MODE_MAX */
 
 typedef struct {
     /* áudio */

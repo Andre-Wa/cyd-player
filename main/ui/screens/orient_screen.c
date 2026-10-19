@@ -32,23 +32,42 @@ static void orient_draw(gfx_canvas_t *c)
     gfx_fill(c, cx - 15, top + 50, 30, 62, COL_ACCENT);
 
     char m[24];
-    snprintf(m, sizeof(m), "modo %d", appcfg_get()->lcd_xform);
+    snprintf(m, sizeof(m), "modo %d/%d", appcfg_get()->lcd_xform, LCD_MODE_MAX);
     gfx_text(c, cx + 60, top + 60, m, COL_MUTED, 1);
 
-    gfx_text(c, 44, 176, "Toque curto: girar modo", COL_TEXT, 1);
+    gfx_text(c, 44, 176, "Toque/arraste: girar modo", COL_TEXT, 1);
     gfx_text(c, 28, 196, "Segure 2 s: confirmar", COL_ACCENT, 1);
-    gfx_text(c, 28, 216, "(seta deve apontar p/ cima)", COL_MUTED, 1);
+    gfx_text(c, 28, 216, "(seta p/ cima, texto legivel)", COL_MUTED, 1);
 }
+
+static bool s_drag_consumed;
 
 static void orient_touch(const touch_evt_t *ev)
 {
     app_config_t *cfg = appcfg_get();
 
-    if (ev->type == TEV_TAP) {
-        cfg->lcd_xform = (uint8_t)((cfg->lcd_xform + 1) % 6);
-        lcd_set_xform(cfg->lcd_xform);
-        appcfg_save();
-        ui_invalidate_all();
+    if (ev->type == TEV_PRESS) {
+        s_drag_consumed = false;
+        return;
+    }
+    if (ev->type == TEV_TAP || ev->type == TEV_DRAG) {
+        int step = 0;
+        if (ev->type == TEV_TAP) {
+            step = +1;
+        } else if (!s_drag_consumed && ev->dx >= 8) {
+            step = +1;
+            s_drag_consumed = true;
+        } else if (!s_drag_consumed && ev->dx <= -8) {
+            step = -1;
+            s_drag_consumed = true;
+        }
+        if (step) {
+            int next = (cfg->lcd_xform + step + LCD_MODE_MAX + 1) % (LCD_MODE_MAX + 1);
+            cfg->lcd_xform = (uint8_t)next;
+            lcd_set_xform(cfg->lcd_xform);
+            appcfg_save();
+            ui_invalidate_all();
+        }
     } else if (ev->type == TEV_LONG) {
         cfg->orient_ok = 1;
         cfg->has_calib = 0;      /* recalibrar o touch na nova orientação */

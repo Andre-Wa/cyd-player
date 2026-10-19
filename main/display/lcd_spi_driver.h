@@ -28,8 +28,8 @@ esp_err_t lcd_flush_async(int x, int y, int w, int h, const uint16_t *buf);
 void lcd_wait_one(void);
 void lcd_wait_all(void);
 
-/* Modos de orientação (NVS lcd_xform):
- *   0/1 = direto, MADCTL paisagem / paisagem+180
- *   2..5 = transposição por software (painéis que ignoram o bit MV)
- * Aplica imediatamente (MADCTL quando aplicável). */
+/* Modos de orientação (NVS lcd_xform, 0..13): combinações de MADCTL
+ * (polaridade MV, ordem BGR/RGB, espelhos) e transposição por software.
+ * Veja a tabela s_modes no .c. Aplica imediatamente. */
+#define LCD_MODE_MAX 13
 void lcd_set_xform(uint8_t xf);
