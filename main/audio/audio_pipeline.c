@@ -52,6 +52,7 @@ static volatile uint32_t s_elapsed_s;
 static volatile uint32_t s_total_s;
 static volatile bool s_bt_stream_started;
 
+static bool hwm_logged;
 static wav_dec_t s_dec;
 static char s_cur_path[PL_PATH_LEN];
 static audio_route_t s_route = ROUTE_NONE;
@@ -189,6 +190,7 @@ static bool open_track(const char *path)
     s_elapsed_s = 0;
     s_paused = false;
     s_playing = true;
+    hwm_logged = false;
 
     /* ring buffer limpo p/ evitar resíduo da faixa anterior */
     size_t sz;
@@ -306,6 +308,13 @@ static void pipeline_task(void *arg)
             local_dac_write(mono8, frames, 500);
         }
 
+        /* ---- margem de pilha (diagnóstico, 1x por faixa) ---- */
+        if (!hwm_logged) {
+            hwm_logged = true;
+            ESP_LOGI(TAG, "HWM audio_pipe: %u words livres no pico",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        }
+
         /* ---- progresso (1 evento/s) ---- */
         frames_since_prog += frames;
         if (frames_since_prog >= AUDIO_SAMPLE_RATE) {
@@ -340,7 +349,8 @@ esp_err_t audio_pipeline_init(void)
         local_dac_enable(appcfg_get()->local_out);
     }
 
-    BaseType_t ok = xTaskCreatePinnedToCore(pipeline_task, "audio_pipe", 4096,
+    /* pilha generosa: a cadeia fread -> FATFS -> SDSPI -> log é profunda */
+    BaseType_t ok = xTaskCreatePinnedToCore(pipeline_task, "audio_pipe", 8192,
                                             NULL, PRIO_AUDIO_PIPELINE, &s_task,
                                             CORE_AUDIO);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;

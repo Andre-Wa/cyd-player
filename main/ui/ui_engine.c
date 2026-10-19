@@ -344,7 +344,7 @@ void ui_init(void)
     s_touch_q = xQueueCreate(8, sizeof(touch_evt_t));
     s_ctrl_q = xQueueCreate(4, sizeof(ctrl_msg_t));
 
-    xTaskCreatePinnedToCore(ui_render_task, "ui_render", 4096, NULL,
+    xTaskCreatePinnedToCore(ui_render_task, "ui_render", 6144, NULL,
                             PRIO_UI_RENDER, NULL, CORE_UI);
     xTaskCreatePinnedToCore(touch_task, "touch", 2560, NULL,
                             PRIO_TOUCH, NULL, CORE_UI);

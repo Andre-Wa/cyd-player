@@ -374,6 +374,6 @@ void app_main(void)
     ESP_LOGI(TAG, "heap após BT: %u B livres", (unsigned)esp_get_free_heap_size());
 
     /* controlador da aplicação */
-    xTaskCreatePinnedToCore(app_ctrl_task, "app_ctrl", 4096, NULL,
+    xTaskCreatePinnedToCore(app_ctrl_task, "app_ctrl", 6144, NULL,
                             PRIO_APP_CTRL, NULL, CORE_UI);
 }

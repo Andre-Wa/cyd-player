@@ -92,7 +92,26 @@ perigosamente baixa.** Estratégias (em ordem de segurança):
 - Botão “Concluir” na tela e na web → derruba Wi-Fi, restaura BT, recarrega
   playlist, volta ao player.
 
-### 2.5 Riscos conhecidos
+### 2.5 Variante recomendada: “modo download” travado (estilo fastboot) — ideia do usuário
+
+Em vez de ligar/desligar Wi-Fi+HTTP **dinamicamente** com o resto do sistema
+vivo, tratar o modo servidor como um **modo de boot exclusivo**:
+
+1. Entrada: *Ajustes → “Modo transferência”* **ou** botão BOOT (GPIO0)
+   segurado no power-on → grava flag `xfer=1` na NVS → `esp_restart()`.
+2. Boot com `xfer=1`: inicializa **apenas** NVS, SD, Wi-Fi (SoftAP) e
+   `esp_http_server`; **não** inicializa Bluedroid/BT, DAC, UI/touch/LCD
+   (ou exibe uma tela estática “Modo transferência: SSID/URL”). Heap livre
+   passa de ~75 KB para **~200+ KB** — folga total para Wi-Fi+HTTP+buffers.
+3. Saída: botão na página web (“Concluir”) ou toque longo na tela estática →
+   `xfer=0` + `esp_restart()` → boot normal com reconexão BT automática.
+
+Vantagens: sem `esp_bluedroid_deinit()`/re-init (ciclo sensível), sem coex
+Wi-Fi+BT, sem concorrência FATFS com o player, RAM de sobra, e UX clara
+(“a placa está em modo download”, como um fastboot). Custo: um branch de
+boot no `app_main` + tela estática (~150 linhas no total).
+
+### 2.6 Riscos conhecidos
 
 - `esp_bluedroid_deinit()`/re-init: suportado, mas sensível; testar ciclo
   entrar/sair do modo ≥ 20× (alternativa: manter BT init e aceitar margem

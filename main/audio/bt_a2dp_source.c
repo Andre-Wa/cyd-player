@@ -599,7 +599,7 @@ esp_err_t bt_audio_init(void)
     if (!s_work_q) {
         return ESP_ERR_NO_MEM;
     }
-    xTaskCreatePinnedToCore(bt_work_task, "bt_work", 3072, NULL,
+    xTaskCreatePinnedToCore(bt_work_task, "bt_work", 4096, NULL,
                             PRIO_AUDIO_PIPELINE - 1, NULL, CORE_AUDIO);
 
     /* libera memória do controller BLE (não usado) */
